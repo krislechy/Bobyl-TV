@@ -30,8 +30,11 @@ try {
     }
     $stage = 'Privacy'
     [void][IO.Directory]::CreateDirectory((Join-Path $repoRoot 'captures'))
+    $ErrorActionPreference = 'Continue'
     & $scanner git . --redact=100 --log-opts='--all' --no-banner *> .\captures\publish-privacy.log
-    if ($LASTEXITCODE -ne 0) { throw 'Secret scan blocked publication; see captures/publish-privacy.log' }
+    $scanExitCode = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($scanExitCode -ne 0) { throw 'Secret scan blocked publication; see captures/publish-privacy.log' }
     $files = @(git ls-files)
     if (@($files | Where-Object { $_ -match '(?i)(\.apk$|\.jks$|\.keystore$|^reference/original-apk/|^captures/|^\.serena/memories/|\.local\.(json|ps1)$|(^|/)\.env($|\.))' }).Count) {
         throw 'Private or binary artifacts are tracked; publication blocked'
