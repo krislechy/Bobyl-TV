@@ -2,6 +2,7 @@ package com.bobyl.tv
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,11 +18,14 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -34,8 +38,7 @@ import com.bobyl.tv.data.CatalogFilm
 
 @Composable
 internal fun PersonalRatingButton(provider: String, filmId: String, entryFocus: FocusRequester, onClick: () -> Unit) {
-    val compact = LocalCompactFilmActions.current
-    val buttonSize = if (compact) 40.dp else 48.dp
+    val buttonSize = 48.dp
     val model: PersonalRatingViewModel = viewModel(key = "personal-rating:$provider:$filmId")
     val state by model.state.collectAsState()
     var focused by remember { mutableStateOf(false) }
@@ -46,29 +49,38 @@ internal fun PersonalRatingButton(provider: String, filmId: String, entryFocus: 
         return
     }
     val rated = (state.value ?: 0) > 0
-    Row(Modifier.height(buttonSize).widthIn(min = buttonSize).focusRequester(entryFocus).clip(shape)
+    Box(Modifier.size(buttonSize).focusRequester(entryFocus).clip(shape)
         .background(CinemaStyle.Raised)
         .border(if (focused) 3.dp else 1.dp, if (focused) CinemaStyle.Focus else CinemaStyle.Outline, shape)
         .onFocusChanged { focused = it.isFocused }
-        .clickable(onClickLabel = if (rated) "Изменить оценку ${state.value}" else "Оценить фильм", onClick = onClick)
-        .padding(horizontal = if (compact) 10.dp else 12.dp), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp)) {
-        Canvas(Modifier.size(if (compact) 20.dp else 24.dp)) {
-            val u = size.minDimension / 24f
-            val star = androidx.compose.ui.graphics.Path().apply {
-                moveTo(11f * u, 3f * u)
-                listOf(13.7f to 8.7f, 20f to 9.6f, 15.5f to 14f, 16.6f to 20.3f,
-                    11f to 17.3f, 5.4f to 20.3f, 6.5f to 14f, 2f to 9.6f, 8.3f to 8.7f).forEach { (x,y) -> lineTo(x*u,y*u) }
-                close()
+        .clickable(onClickLabel = if (rated) "Изменить оценку ${state.value}" else "Оценить фильм", onClick = onClick),
+        contentAlignment = Alignment.Center) {
+        Image(painterResource(R.drawable.personal_rating), contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            colorFilter = ColorFilter.tint(if (rated) CinemaStyle.Focus else CinemaStyle.Accent))
+        if (rated) {
+            val score = state.value.toString()
+            val scorePaint = remember {
+                android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
+                }
             }
-            if (rated) drawPath(star, CinemaStyle.Focus)
-            else {
-                drawPath(star, CinemaStyle.Accent, style = Stroke(1.6f*u))
-                drawLine(CinemaStyle.Accent, Offset(19f*u, 2f*u), Offset(23f*u, 2f*u), 1.6f*u, StrokeCap.Round)
-                drawLine(CinemaStyle.Accent, Offset(21f*u, 0f), Offset(21f*u, 4f*u), 1.6f*u, StrokeCap.Round)
+            val scoreBounds = remember { android.graphics.Rect() }
+            Canvas(Modifier.fillMaxSize()) {
+                scorePaint.color = CinemaStyle.OnAccent.toArgb()
+                scorePaint.textSize = (if (state.value == 10) 16.sp else 20.sp).toPx()
+                scorePaint.getTextBounds(score, 0, score.length, scoreBounds)
+                // Star centre (64, 62) transformed by the approved SVG group.
+                val starCentreY = size.height * 75.325f / 128f
+                drawContext.canvas.nativeCanvas.drawText(score,
+                    size.width / 2f - scoreBounds.exactCenterX(),
+                    starCentreY - scoreBounds.exactCenterY(), scorePaint)
             }
         }
-        if (rated) Text(state.value.toString(), color = CinemaStyle.Text, fontSize = if (compact) 18.sp else 21.sp, fontWeight = FontWeight.SemiBold)
+        else Canvas(Modifier.align(Alignment.TopEnd).padding(4.dp).size(8.dp)) {
+            drawLine(CinemaStyle.Accent, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 1.5.dp.toPx(), StrokeCap.Round)
+            drawLine(CinemaStyle.Accent, Offset(size.width / 2, 0f), Offset(size.width / 2, size.height), 1.5.dp.toPx(), StrokeCap.Round)
+        }
         ActionTooltip(if (rated) "Изменить оценку: ${state.value}" else "Оценить фильм", focused)
     }
 }
@@ -109,7 +121,7 @@ internal fun PersonalRatingPanel(provider: String, filmId: String, entryFocus: F
         }
     }
     BackHandler(enabled = expanded && ratingFocused && !state.saving && !initiallyExpanded) { editing = false; restoreFocus = true }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (state.loading) {
                 SkeletonShape(Modifier.size(if (initiallyExpanded) 204.dp else 52.dp, 48.dp))

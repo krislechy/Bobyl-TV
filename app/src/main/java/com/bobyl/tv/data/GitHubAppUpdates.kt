@@ -38,14 +38,14 @@ internal class GitHubAppUpdates(private val context: Context) {
         val connection = connect(url)
         try {
             if (connection.responseCode == 404 && missingAllowed) return null
-            check(connection.responseCode == 200) { "GitHub недоступен (HTTP ${connection.responseCode}). Повторите позже." }
+            check(connection.responseCode == 200) { "Не удалось проверить обновления. Повторите позже." }
             val bytes = connection.inputStream.use { input ->
                 val output = java.io.ByteArrayOutputStream()
                 val buffer = ByteArray(8192)
                 while (true) {
                     val count = input.read(buffer)
                     if (count < 0) break
-                    check(output.size() + count <= 1024 * 1024) { "Слишком большой ответ GitHub" }
+                    check(output.size() + count <= 1024 * 1024) { "Не удалось прочитать данные обновления" }
                     output.write(buffer, 0, count)
                 }
                 output.toByteArray()
@@ -61,7 +61,7 @@ internal class GitHubAppUpdates(private val context: Context) {
         check(!release.optBoolean("draft") && !release.optBoolean("prerelease"))
         val assets = release.getJSONArray("assets")
         fun asset(name: String): JSONObject = (0 until assets.length()).map { assets.getJSONObject(it) }
-            .firstOrNull { it.optString("name") == name } ?: error("В релизе нет файла $name")
+            .firstOrNull { it.optString("name") == name } ?: error("Обновление опубликовано не полностью. Повторите позже.")
         fun downloadUrl(asset: JSONObject): String = asset.getString("browser_download_url").also {
             check(it.startsWith("https://github.com/$REPOSITORY/releases/download/")) { "Неожиданный адрес обновления" }
         }
@@ -84,7 +84,7 @@ internal class GitHubAppUpdates(private val context: Context) {
         val result = File(directory, "production.apk")
         val connection = connect(update.url)
         try {
-            check(connection.responseCode == 200) { "Не удалось скачать обновление (HTTP ${connection.responseCode})" }
+            check(connection.responseCode == 200) { "Не удалось скачать обновление. Повторите позже." }
             val digest = MessageDigest.getInstance("SHA-256")
             var received = 0L
             var lastProgress = -1
@@ -95,7 +95,7 @@ internal class GitHubAppUpdates(private val context: Context) {
                     val count = input.read(buffer)
                     if (count < 0) break
                     received += count
-                    check(received <= update.size && received <= MAX_APK_BYTES) { "Некорректный размер APK" }
+                    check(received <= update.size && received <= MAX_APK_BYTES) { "Файл обновления повреждён" }
                     output.write(buffer, 0, count)
                     digest.update(buffer, 0, count)
                     val percent = (received * 100 / update.size).toInt()
@@ -107,7 +107,7 @@ internal class GitHubAppUpdates(private val context: Context) {
             }
             verifyApk(partial, update.versionCode)
             check(!result.exists() || result.delete())
-            check(partial.renameTo(result)) { "Не удалось сохранить APK" }
+            check(partial.renameTo(result)) { "Не удалось сохранить обновление" }
             result
         } finally { partial.delete(); connection.disconnect() }
     }
@@ -117,17 +117,17 @@ internal class GitHubAppUpdates(private val context: Context) {
         val manager = context.packageManager
         val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
         val installed = manager.getPackageInfo(context.packageName, flags)
-        val archive = manager.getPackageArchiveInfo(file.absolutePath, flags) ?: error("Неверный APK")
-        check(archive.packageName == "com.bobyl.tv" && archive.packageName == installed.packageName) { "APK другого приложения" }
+        val archive = manager.getPackageArchiveInfo(file.absolutePath, flags) ?: error("Не удалось распознать файл обновления")
+        check(archive.packageName == "com.bobyl.tv" && archive.packageName == installed.packageName) { "Это обновление для другого приложения" }
         val version = if (Build.VERSION.SDK_INT >= 28) archive.longVersionCode else archive.versionCode.toLong()
-        check(version == expectedVersion && version > BuildConfig.VERSION_CODE) { "APK не является новой версией" }
+        check(version == expectedVersion && version > BuildConfig.VERSION_CODE) { "Версия обновления не подходит" }
         check((archive.applicationInfo?.flags ?: ApplicationInfo.FLAG_DEBUGGABLE) and ApplicationInfo.FLAG_DEBUGGABLE == 0) {
-            "Отладочная сборка не подходит для обновления"
+            "Этот файл не подходит для обновления"
         }
         val currentSigners = if (Build.VERSION.SDK_INT >= 28) installed.signingInfo?.apkContentsSigners else installed.signatures
         val newSigners = if (Build.VERSION.SDK_INT >= 28) archive.signingInfo?.apkContentsSigners else archive.signatures
         check(!currentSigners.isNullOrEmpty() && !newSigners.isNullOrEmpty() && currentSigners.toSet() == newSigners.toSet()) {
-            "Подпись APK отличается от установленного приложения"
+            "Обновление несовместимо с установленным приложением"
         }
     }
 }

@@ -42,16 +42,16 @@ internal fun FilmMoreMenu(expanded: Boolean, onExpandedChange: (Boolean) -> Unit
                 Column(Modifier.width(224.dp).clip(shape).background(CinemaStyle.Surface)
                     .border(1.dp, CinemaStyle.Outline, shape).padding(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (canDownload) CinematicButton("Скачать", false, Modifier.fillMaxWidth().focusRequester(firstFocus)) {
+                    if (canDownload) CinematicButton("Скачать", false, Modifier.fillMaxWidth().focusRequester(firstFocus), leadingIcon = FieldGlyph.Download) {
                         onExpandedChange(false)
                         onDownload()
                     }
                     CinematicButton("Трейлер", false, Modifier.fillMaxWidth()
-                        .then(if (!canDownload) Modifier.focusRequester(firstFocus) else Modifier)) {
+                        .then(if (!canDownload) Modifier.focusRequester(firstFocus) else Modifier), leadingIcon = FieldGlyph.Trailer) {
                         onExpandedChange(false)
                         onTrailer()
                     }
-                    CinematicButton("Поделиться", false, Modifier.fillMaxWidth()) {
+                    CinematicButton("Поделиться", false, Modifier.fillMaxWidth(), leadingIcon = FieldGlyph.Share) {
                         onExpandedChange(false)
                         onShare()
                     }

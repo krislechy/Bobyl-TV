@@ -19,6 +19,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -296,7 +297,7 @@ private fun NewSeriesCountBadge(count: Int, modifier: Modifier = Modifier) {
 }
 
 @Composable
-internal fun CinematicButton(label: String, primary: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+internal fun CinematicButton(label: String, primary: Boolean, modifier: Modifier = Modifier, leadingIcon: FieldGlyph? = null, onClick: () -> Unit) {
     var focused by remember { androidx.compose.runtime.mutableStateOf(false) }
     Box(
         modifier = modifier
@@ -313,7 +314,13 @@ internal fun CinematicButton(label: String, primary: Boolean, modifier: Modifier
             .padding(horizontal = 20.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = if (primary) CinemaStyle.OnAccent else CinemaStyle.Text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+        val color = if (primary) CinemaStyle.OnAccent else CinemaStyle.Text
+        if (leadingIcon == null) Text(label, color = color, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
             maxLines = 2, overflow = TextOverflow.Ellipsis)
+        else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            FieldIcon(leadingIcon, color, Modifier.size(20.dp))
+            Text(label, color = color, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
     }
 }

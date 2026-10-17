@@ -50,7 +50,7 @@ internal fun AuthSettings(provider: String, auth: AuthRepository, changed: () ->
                 profile = auth.profile(provider)
                 message = when (profile?.authenticated) {
                     true -> "Вход подтверждён сервером"
-                    false -> { account = null; "Сессия истекла. Войдите заново." }
+                    false -> { account = null; "Войдите в аккаунт заново." }
                     null -> "Не удалось определить состояние входа. Повторите проверку."
                 }
             }
@@ -83,7 +83,7 @@ internal fun AuthSettings(provider: String, auth: AuthRepository, changed: () ->
                         try {
                             account = if (registration) auth.register(provider, email, submittedName, submittedPassword) else auth.login(provider, submittedName, submittedPassword)
                             password = ""
-                            message = "Вход подтверждён сервером. Сессия сохранена."
+                            message = "Вы вошли в аккаунт"
                             changed()
                             revision++
                         } catch (cancelled: CancellationException) { throw cancelled }
@@ -123,6 +123,5 @@ internal fun AuthSettings(provider: String, auth: AuthRepository, changed: () ->
         }
         if (busy && !checking) LoadingIndicator("Сохраняем…")
         if (message.isNotBlank()) Text(message, color = Color(0xFFD7D7DD), fontSize = 14.sp)
-        Text("Пароль не сохраняется • сессия защищена Android Keystore", color = Color(0xFFACADB2), fontSize = 12.sp)
     }
 }

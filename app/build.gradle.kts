@@ -73,8 +73,8 @@ android {
         applicationId = "com.bobyl.tv"
         minSdk = 23
         targetSdk = 35
-        versionCode = 57
-        versionName = "2.3.9"
+        versionCode = 58
+        versionName = "2.3.10"
         buildConfigField("String", "BUILD_DATE", "\"${providers.of(BuildDateSource::class.java) {}.get()}\"")
         testInstrumentationRunner = "com.bobyl.tv.ParityInstrumentation"
     }

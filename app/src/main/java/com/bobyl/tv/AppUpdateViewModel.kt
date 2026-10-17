@@ -28,7 +28,7 @@ internal class AppUpdateViewModel(application: Application) : AndroidViewModel(a
             try {
                 val update = repository.latest()
                 mutableState.update { it.copy(update = update, apk = null,
-                    message = if (update == null) "Новых production-обновлений нет" else "Доступна версия ${update.versionName}") }
+                    message = if (update == null) "Обновлений нет" else "Доступна версия ${update.versionName}") }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { mutableState.update { it.copy(error = networkErrorMessage(failure)) } }
             finally { mutableState.update { it.copy(checking = false) } }
@@ -42,7 +42,7 @@ internal class AppUpdateViewModel(application: Application) : AndroidViewModel(a
         viewModelScope.launch {
             try {
                 val apk = repository.download(update) { value -> mutableState.update { it.copy(progress = value) } }
-                mutableState.update { it.copy(apk = apk, message = "Обновление загружено. Нажмите «Установить».") }
+                mutableState.update { it.copy(apk = apk, message = "Обновление загружено") }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { mutableState.update { it.copy(error = networkErrorMessage(failure)) } }
             finally { mutableState.update { it.copy(downloading = false) } }

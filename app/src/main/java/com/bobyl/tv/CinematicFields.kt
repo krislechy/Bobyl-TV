@@ -42,7 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 
-internal enum class FieldGlyph { Search, Clear, Microphone, Reply, Like, Delete, Send, More, MoreVertical, Refresh, Restore, Eye, Star, Play, Comments, Bookmark, Back }
+internal enum class FieldGlyph { Search, Clear, Microphone, Reply, Like, Delete, Send, More, MoreVertical, Refresh, Restore, Eye, Star, Play, Comments, Bookmark, Back, Download, Trailer, Share }
 internal val LocalCompactFilmActions = staticCompositionLocalOf { false }
 
 /** Shared field surface; action buttons remain separate D-pad and accessibility targets. */
@@ -144,7 +144,7 @@ internal fun FieldAction(glyph: FieldGlyph, label: String, primary: Boolean = fa
 }
 
 @Composable
-private fun FieldIcon(glyph: FieldGlyph, color: Color, modifier: Modifier, filled: Boolean = false) {
+internal fun FieldIcon(glyph: FieldGlyph, color: Color, modifier: Modifier, filled: Boolean = false) {
     Canvas(modifier) {
         val unit = size.minDimension / 24f
         val stroke = 1.8f * unit
@@ -152,6 +152,25 @@ private fun FieldIcon(glyph: FieldGlyph, color: Color, modifier: Modifier, fille
         fun line(x: Float, y: Float, x2: Float, y2: Float) =
             drawLine(color, point(x, y), point(x2, y2), stroke, StrokeCap.Round)
         when (glyph) {
+            FieldGlyph.Download -> {
+                line(12f, 3f, 12f, 15f); line(7f, 10f, 12f, 15f); line(12f, 15f, 17f, 10f)
+                line(4f, 17f, 4f, 21f); line(4f, 21f, 20f, 21f); line(20f, 21f, 20f, 17f)
+            }
+            FieldGlyph.Trailer -> {
+                drawRoundRect(color, point(3f, 4f), Size(18f * unit, 16f * unit),
+                    androidx.compose.ui.geometry.CornerRadius(2f * unit), style = Stroke(stroke))
+                val play = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(9f * unit, 8f * unit); lineTo(16f * unit, 12f * unit)
+                    lineTo(9f * unit, 16f * unit); close()
+                }
+                drawPath(play, color)
+            }
+            FieldGlyph.Share -> {
+                line(7f, 11f, 17f, 6f); line(7f, 13f, 17f, 18f)
+                listOf(5f to 12f, 19f to 5f, 19f to 19f).forEach { (x, y) ->
+                    drawCircle(color, 2.5f * unit, point(x, y), style = Stroke(stroke))
+                }
+            }
             FieldGlyph.Back -> {
                 line(20f, 12f, 4f, 12f)
                 line(4f, 12f, 11f, 5f); line(4f, 12f, 11f, 19f)

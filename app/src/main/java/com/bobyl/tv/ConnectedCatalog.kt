@@ -387,7 +387,8 @@ private fun DetailsDialog(provider: String, playerPackage: String, film: Catalog
                     }
                 }
                 CompositionLocalProvider(LocalCompactFilmActions provides true) {
-                LazyRow(verticalAlignment = Alignment.CenterVertically,
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyRow(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(4.dp)) {
                     if (info.playback != null) item { FieldAction(FieldGlyph.Play, "Смотреть", primary = true, modifier = Modifier.focusRequester(watchFocus), tooltip = true) { returnFocus = watchFocus; download = false; showPlayback = true } }
                     item { FieldAction(FieldGlyph.Comments, "Комментарии", modifier = Modifier.focusRequester(commentsFocus), tooltip = true) { returnFocus = commentsFocus; comments = true } }
@@ -403,31 +404,30 @@ private fun DetailsDialog(provider: String, playerPackage: String, film: Catalog
                                 poster = info.poster.ifBlank { film.poster }), !historyState.watched)
                         }
                     }
-                    item {
-                        FilmMoreMenu(moreMenuOpen, onExpandedChange = {
-                            moreMenuOpen = it
-                            if (it) returnFocus = moreFocus
-                        }, triggerFocus = moreFocus, canDownload = info.playback != null, busy = actionBusy,
-                            onDownload = { download = true; showPlayback = true },
-                            onTrailer = { if (!actionBusy) { actionBusy = true; scope.launch {
-                                try { openWeb(context, ExtrasRepository().trailer(provider, info.id)) }
-                                catch (cancelled: CancellationException) { throw cancelled }
-                                catch (failure: Exception) { actionMessage = networkErrorMessage(failure) }
-                                finally { actionBusy = false }
-                            } } },
-                            onShare = {
-                                try { context.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND)
-                                    .setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, "${info.title}\n${film.url}"), "Поделиться")) }
-                                catch (_: Exception) { actionMessage = "Нет приложения для отправки ссылки" }
-                            })
-                    }
                     if (info.id.isNotBlank()) item {
                         PersonalRatingButton(provider, info.id, ratingFocus) {
                             returnFocus = ratingFocus
                             showRatingPrompt = true
                         }
                     }
-                    item { FieldAction(FieldGlyph.Back, "Назад", tooltip = true, onClick = dismiss) }
+                }
+                FilmMoreMenu(moreMenuOpen, onExpandedChange = {
+                    moreMenuOpen = it
+                    if (it) returnFocus = moreFocus
+                }, triggerFocus = moreFocus, canDownload = info.playback != null, busy = actionBusy,
+                    onDownload = { download = true; showPlayback = true },
+                    onTrailer = { if (!actionBusy) { actionBusy = true; scope.launch {
+                        try { openWeb(context, ExtrasRepository().trailer(provider, info.id)) }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { actionMessage = networkErrorMessage(failure) }
+                        finally { actionBusy = false }
+                    } } },
+                    onShare = {
+                        try { context.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND)
+                            .setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, "${info.title}\n${film.url}"), "Поделиться")) }
+                        catch (_: Exception) { actionMessage = "Нет приложения для отправки ссылки" }
+                    })
+                FieldAction(FieldGlyph.Back, "Назад", tooltip = true, onClick = dismiss)
                 }
                 }
                 Box(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned {
@@ -495,7 +495,7 @@ private fun DetailsDialog(provider: String, playerPackage: String, film: Catalog
                 }
                 if (actionBusy) LoadingIndicator("Сохраняем…")
                 if (actionMessage.isNotBlank()) Text(actionMessage, color = Secondary)
-                if (info.playback == null) Text("Сайт пока не предоставил данные для воспроизведения.", color = Secondary, fontSize = 14.sp)
+                if (info.playback == null) Text("Видео пока недоступно", color = Secondary, fontSize = 14.sp)
                 Spacer(Modifier.height(8.dp))
                 }
                 if (detailsScroll.maxValue > 0) Canvas(Modifier.align(Alignment.CenterEnd).width(3.dp).fillMaxHeight()) {

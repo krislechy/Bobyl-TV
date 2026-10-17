@@ -91,7 +91,7 @@ internal class HistoryViewModel(application: Application) : AndroidViewModel(app
                 }
                 val records = updateLocalWatched(provider, key, watched)
                 mutableState.update { it.copy(records = records, error = if (it.server.none { row -> historyFilmKey(row.film.url) == key })
-                    "Отметка сохранена только на устройстве: записи в истории аккаунта нет. Серверная отметка доступна после начала просмотра в аккаунте."
+                    "Отметка сохранена на устройстве. В истории аккаунта этого фильма пока нет."
                     else "") }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { mutableState.update { it.copy(error = networkErrorMessage(failure)) } }

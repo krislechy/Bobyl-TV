@@ -72,7 +72,6 @@ internal fun CommentsDialog(provider: String, filmId: String, dismiss: () -> Uni
                     Input(text, "Ваш комментарий", { if (!busy) text = it }) {
                         FieldAction(FieldGlyph.Send, "Отправить комментарий", primary = true, enabled = !busy && text.isNotBlank()) { sending = true }
                     }
-                    Text("Для публикации нужен вход • возможна проверка на сайте", color = Color.Gray, fontSize = 12.sp)
                 }
             }
             if (notice.isNotBlank()) item { Text(notice, color = Color.White) }

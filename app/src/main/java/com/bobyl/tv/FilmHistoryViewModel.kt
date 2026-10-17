@@ -79,7 +79,7 @@ internal class FilmHistoryViewModel(application: Application) : AndroidViewModel
                 val repository = ExtrasRepository()
                 serverRows = entries.map { repository.setHistoryWatched(provider, it, watched) }
                 if (entries.isEmpty()) mutableState.update { it.copy(error =
-                    "Отметка сохранена только на устройстве: записи в истории аккаунта нет. Серверная отметка доступна после начала просмотра в аккаунте.") }
+                    "Отметка сохранена на устройстве. В истории аккаунта этого фильма пока нет.") }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 mutableState.update { it.copy(error = if (savedLocally)

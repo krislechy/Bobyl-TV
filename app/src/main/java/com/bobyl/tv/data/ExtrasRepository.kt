@@ -78,7 +78,7 @@ class ExtrasRepository(private val transport: PageTransport = HtmlTransport()) {
         val document = transport.get(CatalogUrls.provider(provider).trimEnd('/') + path)
         val script = document.select("script").joinToString("\n") { it.data() }
         val init = Regex("initCDN(Movies|Series)Events\\s*\\(\\s*(\\d+)\\s*,\\s*['\"]?(\\d+)(?:['\"]?\\s*,\\s*(\\d+)\\s*,\\s*(\\d+))?").find(script)
-            ?: error("Не удалось сохранить параметры для восстановления. Запись не удалена.")
+            ?: error("Не удалось подготовить восстановление. Запись не удалена.")
         val season = entry.season.ifBlank { if (init.groupValues[1] == "Movies") "0" else init.groupValues[4] }
         val episode = entry.episode.ifBlank { if (init.groupValues[1] == "Movies") "0" else init.groupValues[5] }
         val position = local?.takeIf { init.groupValues[1] == "Movies" || (it.season == season && it.episode == episode) }?.positionMs ?: 0L
@@ -86,7 +86,7 @@ class ExtrasRepository(private val transport: PageTransport = HtmlTransport()) {
     }
 
     suspend fun restoreHistory(provider: String, entry: ContinueItem): ContinueItem = withContext(Dispatchers.IO) {
-        val save = entry.save ?: error("Параметры удалённой записи недоступны")
+        val save = entry.save ?: error("Не удалось восстановить запись")
         fun List<ContinueItem>.matching() = firstOrNull {
             historyFilmKey(it.film.url) == historyFilmKey(entry.film.url) && it.season == entry.season && it.episode == entry.episode
         }
@@ -218,7 +218,7 @@ class ExtrasRepository(private val transport: PageTransport = HtmlTransport()) {
         val doc = Jsoup.parse(json.optString("code"), CatalogUrls.provider(provider))
         val url = doc.selectFirst("iframe[src]")?.absUrl("src").orEmpty()
             .ifBlank { doc.selectFirst("video[src], source[src]")?.absUrl("src").orEmpty() }
-        check(PlaybackParser.isMediaUrl(url)) { "Сайт не предоставил адрес трейлера" }
+        check(PlaybackParser.isMediaUrl(url)) { "Не удалось загрузить трейлер" }
         return url
     }
 }

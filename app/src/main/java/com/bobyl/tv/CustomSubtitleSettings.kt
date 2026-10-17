@@ -35,7 +35,7 @@ internal fun CustomSubtitleSettings() {
     LaunchedEffect(Unit) { refresh() }
     Text("Дополнительные файлы для фильмов", color = CinemaStyle.Text, fontSize = 17.sp, fontWeight = FontWeight.Medium)
     Text(CustomSubtitles.RELATIVE_PATH, color = Color.LightGray)
-    Text("Папка постоянная и создаётся при запуске. Поместите файлы в films/ID/, например films/88449/Русский.vtt. SRT, ASS, SSA, VTT добавляются к серверным дорожкам. Для сериалов не используется.", color = Color.LightGray, fontSize = 13.sp)
+    Text("Поместите субтитры в films/ID/. Форматы: SRT, ASS, SSA, VTT.", color = Color.LightGray, fontSize = 13.sp)
     Text(status, color = if (access) Color.LightGray else Color(0xFFFFB5B9))
     if (!access) CinematicButton("Разрешить доступ к файлам", false) {
         if (Build.VERSION.SDK_INT >= 30) {
@@ -46,6 +46,6 @@ internal fun CustomSubtitleSettings() {
             }
         } else permission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
     }
-    if (!access) Text("Android предоставляет доступ ко всем файлам общей памяти. Бобыль использует его только для своей папки субтитров.", color = Color.LightGray, fontSize = 13.sp)
+    if (!access) Text("Для чтения папки субтитров Android запросит доступ ко всем файлам.", color = Color.LightGray, fontSize = 13.sp)
     CinematicButton("Проверить папку", false) { refresh() }
 }

@@ -47,13 +47,10 @@ internal fun PlaybackSettings(player: String, choosePlayer: (String) -> Unit, co
                 decoder = it
                 prefs.edit().putInt("mxDecoder", it.toInt()).apply()
             }
-            Text("Декодер применяется только в MX Player. Если выбранное качество недоступно, появится выбор.", color = CinemaStyle.Muted, fontSize = 14.sp)
         }
         SettingsSection("Сериалы") {
             PreferenceToggle(prefs, "episodeRelay", "Список серий в MX Player", true)
             PreferenceToggle(prefs, "autoNext", "Следующая серия после завершения", false)
-            Text("Для кнопок следующей и предыдущей серии выберите MX Player. Автопереход и сохранение точной позиции требуют поддержки плеера.", color = CinemaStyle.Muted, fontSize = 14.sp)
-            Text("Язык субтитров запрашивается отдельно для каждой серии. Если его нет, другая дорожка не подставляется. В MX Player должно быть включено отображение субтитров.", color = CinemaStyle.Muted, fontSize = 14.sp)
         }
         SettingsSection("Субтитры") {
             PreferenceToggle(prefs, "selectSubtitles", "Предлагать субтитры", true)
@@ -67,10 +64,9 @@ internal fun PlaybackSettings(player: String, choosePlayer: (String) -> Unit, co
                 prefs.edit().putInt("cacheMinutes", it.toInt()).apply()
                 com.bobyl.tv.data.PageCache.configure(it.toInt())
             }
-            Text("Каталоги, поиск, категории и фильмографии. Хранится в памяти до указанного срока или завершения приложения. Карточки фильмов, аккаунт и ссылки воспроизведения загружаются заново.", color = CinemaStyle.Muted, fontSize = 14.sp)
             CinematicButton("Очистить кэш", false) {
                 com.bobyl.tv.data.PageCache.clear()
-                message = "Кэш очищен. Данные будут загружены при следующем обращении."
+                message = "Кэш очищен"
             }
         }
         SettingsSection("Загрузки") {
@@ -88,7 +84,7 @@ internal fun PlaybackSettings(player: String, choosePlayer: (String) -> Unit, co
                         .putExtra(Intent.EXTRA_TEXT, "Опишите проблему:\n\nБобыль ${BuildConfig.VERSION_NAME}\nСборка: ${BuildConfig.BUILD_DATE} МСК\nAndroid ${android.os.Build.VERSION.RELEASE}\nУстройство: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"), "Выберите получателя"))
                 } catch (_: Exception) { message = "На устройстве нет приложения для отправки отчёта" }
             }
-            Text("Бобыль ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\nДата сборки: ${BuildConfig.BUILD_DATE} МСК\nAndroid TV • Kotlin / Compose\nИсходное приложение: HDRezka 2.2.5.", color = CinemaStyle.Muted, fontSize = 14.sp)
+            Text("Бобыль ${BuildConfig.VERSION_NAME}\nСборка от ${BuildConfig.BUILD_DATE} МСК", color = CinemaStyle.Muted, fontSize = 14.sp)
         }
         if (message.isNotBlank()) Text(message, color = CinemaStyle.Muted)
     }

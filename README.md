@@ -101,6 +101,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\BuildDev.ps1
 
 [Полная инструкция по выпуску и обновлению](docs/TV_RELEASE.md).
 
+Публикация выполняется только по отдельной команде. Для сохранения изменений,
+проверки секретов, отправки исходников и выпуска обновления используется один скрипт:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\PublishGitHub.ps1 -NotesPath .\docs\releases\2.3.10.md -CommitMessage "Обновление интерфейса"
+```
+
+Нужны GitHub CLI с авторизацией и Gitleaks в PATH либо в каталоге инструментов
+`privacy/gitleaks.exe`. При обнаружении личных данных или секретов отправка блокируется.
+
 - Production APK: `app/build/outputs/apk/tvRelease/app-tvRelease.apk`.
 - Пакет и существующий сертификат подписи необходимо сохранять.
 - Номер `versionCode` каждого нового релиза должен увеличиваться.
