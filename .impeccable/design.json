@@ -1,0 +1,234 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-29T15:53:28.637Z",
+  "title": "Design System: Бобыль — частный кинозал",
+  "extensions": {
+    "colorMeta": {
+      "background": {
+        "role": "neutral",
+        "displayName": "background",
+        "tonalRamp": [
+          "oklch(15.00% 0.01126 217.07)",
+          "oklch(26.43% 0.01126 217.07)",
+          "oklch(37.86% 0.01126 217.07)",
+          "oklch(49.29% 0.01126 217.07)",
+          "oklch(60.71% 0.01126 217.07)",
+          "oklch(72.14% 0.01126 217.07)",
+          "oklch(83.57% 0.01126 217.07)",
+          "oklch(95.00% 0.01126 217.07)"
+        ]
+      },
+      "rail": {
+        "role": "neutral",
+        "displayName": "rail",
+        "tonalRamp": [
+          "oklch(15.00% 0.01533 218.12)",
+          "oklch(26.43% 0.01533 218.12)",
+          "oklch(37.86% 0.01533 218.12)",
+          "oklch(49.29% 0.01533 218.12)",
+          "oklch(60.71% 0.01533 218.12)",
+          "oklch(72.14% 0.01533 218.12)",
+          "oklch(83.57% 0.01533 218.12)",
+          "oklch(95.00% 0.01533 218.12)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "surface",
+        "tonalRamp": [
+          "oklch(15.00% 0.01612 216.22)",
+          "oklch(26.43% 0.01612 216.22)",
+          "oklch(37.86% 0.01612 216.22)",
+          "oklch(49.29% 0.01612 216.22)",
+          "oklch(60.71% 0.01612 216.22)",
+          "oklch(72.14% 0.01612 216.22)",
+          "oklch(83.57% 0.01612 216.22)",
+          "oklch(95.00% 0.01612 216.22)"
+        ]
+      },
+      "raised": {
+        "role": "neutral",
+        "displayName": "raised",
+        "tonalRamp": [
+          "oklch(15.00% 0.01999 206.35)",
+          "oklch(26.43% 0.01999 206.35)",
+          "oklch(37.86% 0.01999 206.35)",
+          "oklch(49.29% 0.01999 206.35)",
+          "oklch(60.71% 0.01999 206.35)",
+          "oklch(72.14% 0.01999 206.35)",
+          "oklch(83.57% 0.01999 206.35)",
+          "oklch(95.00% 0.01999 206.35)"
+        ]
+      },
+      "focus": {
+        "role": "accent",
+        "displayName": "focus"
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "accent",
+        "tonalRamp": [
+          "oklch(15.00% 0.04845 159.51)",
+          "oklch(26.43% 0.04845 159.51)",
+          "oklch(37.86% 0.04845 159.51)",
+          "oklch(49.29% 0.04845 159.51)",
+          "oklch(60.71% 0.04845 159.51)",
+          "oklch(72.14% 0.04845 159.51)",
+          "oklch(83.57% 0.04845 159.51)",
+          "oklch(95.00% 0.04845 159.51)"
+        ]
+      },
+      "on-accent": {
+        "role": "neutral",
+        "displayName": "on-accent",
+        "tonalRamp": [
+          "oklch(15.00% 0.03246 164.37)",
+          "oklch(26.43% 0.03246 164.37)",
+          "oklch(37.86% 0.03246 164.37)",
+          "oklch(49.29% 0.03246 164.37)",
+          "oklch(60.71% 0.03246 164.37)",
+          "oklch(72.14% 0.03246 164.37)",
+          "oklch(83.57% 0.03246 164.37)",
+          "oklch(95.00% 0.03246 164.37)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "text",
+        "tonalRamp": [
+          "oklch(15.00% 0.00450 134.85)",
+          "oklch(26.43% 0.00450 134.85)",
+          "oklch(37.86% 0.00450 134.85)",
+          "oklch(49.29% 0.00450 134.85)",
+          "oklch(60.71% 0.00450 134.85)",
+          "oklch(72.14% 0.00450 134.85)",
+          "oklch(83.57% 0.00450 134.85)",
+          "oklch(95.00% 0.00450 134.85)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "muted",
+        "tonalRamp": [
+          "oklch(15.00% 0.01334 196.88)",
+          "oklch(26.43% 0.01334 196.88)",
+          "oklch(37.86% 0.01334 196.88)",
+          "oklch(49.29% 0.01334 196.88)",
+          "oklch(60.71% 0.01334 196.88)",
+          "oklch(72.14% 0.01334 196.88)",
+          "oklch(83.57% 0.01334 196.88)",
+          "oklch(95.00% 0.01334 196.88)"
+        ]
+      },
+      "outline": {
+        "role": "neutral",
+        "displayName": "outline",
+        "tonalRamp": [
+          "oklch(15.00% 0.01883 196.47)",
+          "oklch(26.43% 0.01883 196.47)",
+          "oklch(37.86% 0.01883 196.47)",
+          "oklch(49.29% 0.01883 196.47)",
+          "oklch(60.71% 0.01883 196.47)",
+          "oklch(72.14% 0.01883 196.47)",
+          "oklch(83.57% 0.01883 196.47)",
+          "oklch(95.00% 0.01883 196.47)"
+        ]
+      },
+      "selected": {
+        "role": "neutral",
+        "displayName": "selected",
+        "tonalRamp": [
+          "oklch(15.00% 0.03008 168.95)",
+          "oklch(26.43% 0.03008 168.95)",
+          "oklch(37.86% 0.03008 168.95)",
+          "oklch(49.29% 0.03008 168.95)",
+          "oklch(60.71% 0.03008 168.95)",
+          "oklch(72.14% 0.03008 168.95)",
+          "oklch(83.57% 0.03008 168.95)",
+          "oklch(95.00% 0.03008 168.95)"
+        ]
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "D-pad focus",
+        "value": "0ms",
+        "purpose": "Мгновенная смена цветов и контура без масштабирования."
+      }
+    ],
+    "breakpoints": [],
+    "notes": "Tonal ramps are synthesized panel swatches, not additional app tokens. HTML/CSS previews translate native units to pixels; Compose remains the implementation."
+  },
+  "components": [
+    {
+      "name": "Основная кнопка",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Представление Compose для панели: dp/sp показаны в px, не ресурс приложения.",
+      "html": "<button class=\"ds-primary\">Смотреть</button>",
+      "css": ".ds-primary{background:#A5C9B4;color:#10251C;font:600 16px sans-serif;min-height:44px;padding:8px 20px;border:1px solid transparent;border-radius:8px}.ds-primary:hover,.ds-primary:focus-visible{background:#A5C9B4;color:#10251C;outline:2px solid #F1F3F0;outline-offset:-2px}.ds-primary:active{transform:none}"
+    },
+    {
+      "name": "Обычная кнопка",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Представление Compose для панели: dp/sp показаны в px, не ресурс приложения.",
+      "html": "<button class=\"ds-secondary\">Смотреть</button>",
+      "css": ".ds-secondary{background:#202B2E;color:#F1F3F0;font:600 16px sans-serif;min-height:44px;padding:8px 20px;border:1px solid transparent;border-radius:8px}.ds-secondary:hover,.ds-secondary:focus-visible{background:#A5C9B4;color:#10251C;outline:2px solid #F1F3F0;outline-offset:-2px}.ds-secondary:active{transform:none}"
+    },
+    {
+      "name": "Поле поиска",
+      "kind": "input",
+      "refersTo": "search-field",
+      "description": "Нативное поле, упрощённое представление для панели.",
+      "html": "<input class=\"ds-input\" placeholder=\"Название фильма или сериала\">",
+      "css": ".ds-input{background:#202B2E;color:#F1F3F0;font:18px sans-serif;min-height:64px;padding:8px 12px;border:1px solid #435252;border-radius:8px}.ds-input::placeholder{color:#ADB9B9}.ds-input:hover,.ds-input:focus-visible{outline:2px solid #A5C9B4;outline-offset:-2px}"
+    },
+    {
+      "name": "Выбранный раздел",
+      "kind": "nav",
+      "refersTo": "navigation-selected",
+      "description": "Выбор раздела сохраняется после перемещения фокуса.",
+      "html": "<button class=\"ds-nav\">Главная</button>",
+      "css": ".ds-nav{background:#2B4038;color:#A5C9B4;font:600 16px sans-serif;min-height:44px;padding:8px 12px;border:0;border-radius:8px}.ds-nav:hover,.ds-nav:focus-visible{background:#A5C9B4;color:#10251C;outline:2px solid #A5C9B4}.ds-nav:active{transform:none}"
+    },
+    {
+      "name": "Карточка каталога",
+      "kind": "card",
+      "refersTo": "poster",
+      "description": "Нейтральная заглушка вместо копирования удалённого постера; фокус и подписи как в Compose.",
+      "html": "<button class=\"ds-card\"><span class=\"ds-poster\"></span><span class=\"ds-title\">Название фильма</span><span class=\"ds-status\">Статус</span></button>",
+      "css": ".ds-card{width:140px;background:transparent;color:#F1F3F0;padding:0;border:0;text-align:left}.ds-poster{display:block;aspect-ratio:2/3;background:#202B2E;border-radius:8px}.ds-title{display:block;min-height:38px;margin-top:8px;font:500 15px/19px sans-serif}.ds-status{display:block;color:#ADB9B9;font:12px/16px sans-serif}.ds-card:hover,.ds-card:focus-visible{outline:none;color:#A5C9B4}.ds-card:hover .ds-poster,.ds-card:focus-visible .ds-poster{outline:2.5px solid #A5C9B4;outline-offset:-2.5px}.ds-card:active{transform:none}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Частный кинозал",
+    "overview": "Спокойная графитовая оболочка отдаёт внимание постерам. Светлый нефрит обозначает\nдействие и фокус, а подписи остаются отдельным читаемым слоем. Оформление рассчитано\nна телевизор, расстояние до экрана и частые нажатия пульта.\n\nЭто снимок реализованной системы Kotlin / Jetpack Compose TV. Числа во frontmatter\nнормативны для оформления: размеры Android заданы в dp, текст — в sp. Источник\nреализации — [CinemaStyle.kt](app/src/main/java/com/bobyl/tv/CinemaStyle.kt) и общие\nкомпоненты; при изменении этих значений обновлять оба документа системы.\nВыбрана композиция 1 из [направления](docs/redesign-direction.md); выбор визуального\nстиля делегирован пользователем. Существующие функции и настройки сохраняются.",
+    "keyCharacteristics": [
+      "Целые постеры и подписи под изображением.",
+      "Тональные графитовые поверхности без свечения.",
+      "Различимые выбранный раздел и текущий фокус.",
+      "Мгновенное перемещение D-pad без масштабирования."
+    ],
+    "rules": [
+      {
+        "name": "The Selection Rule",
+        "body": "Выбранная кнопка сохраняет нефритовое заполнение независимо от фокуса. Фокус обозначается золотым контуром #F2C879 толщиной 3dp; невыбранная кнопка под ним остаётся графитовой.",
+        "section": "colors"
+      }
+    ],
+    "dos": [
+      "**Do** сохранять системный шрифт, имя «Бобыль» и существующую иконку.",
+      "**Do** брать постеры и сведения из действующего каталога.",
+      "**Do** отличать выбранный раздел от текущего фокуса пульта.",
+      "**Do** сохранять число колонок из настроек и существующие действия."
+    ],
+    "donts": [
+      "**Don't** накладывать название или статус на постер.",
+      "**Don't** добавлять масштабирование при каждом перемещении D-pad.",
+      "**Don't** заменять реальные данные изображениями из концепта.",
+      "**Don't** вводить свечение или декоративные градиенты в общие поверхности."
+    ]
+  }
+}

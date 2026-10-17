@@ -1,0 +1,6 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:width="320dp" android:height="180dp">
+        <bitmap android:src="@drawable/bobyl_tv_banner" android:gravity="fill" />
+    </item>
+    <item android:gravity="top|right" android:width="128dp" android:height="128dp" android:drawable="@drawable/dev_ribbon" />
+</layer-list>

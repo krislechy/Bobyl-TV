@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <application android:icon="@drawable/bobyl_dev_icon" android:roundIcon="@drawable/bobyl_dev_icon"
+        android:banner="@drawable/bobyl_dev_banner" tools:replace="android:icon,android:roundIcon,android:banner">
+        <activity android:name=".RelaySmokeActivity" android:exported="true" />
+    </application>
+</manifest>

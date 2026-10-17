@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <title>Clapperboard: continue, watched, mark and unmark</title>
+  <path d="M7 14H25Q27 14 27 16V25Q27 27 25 27H7Q5 27 5 25V16Q5 14 7 14Z" fill="none" stroke="#F1F3F0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M4.8 9 25.5 4 26.7 9 6 14Z M10 7.75 13.2 12.25 M17 6.05 20.2 10.55" fill="none" stroke="#F1F3F0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path data-variants="checked mark" d="M12.3 20.3 15.1 23 20.3 17.8" fill="none" stroke="#92CBA6" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+  <path data-variants="unmark" d="M12.5 20.5H19.5" fill="none" stroke="#D6A09A" stroke-width="2.1" stroke-linecap="round"/>
+  <path data-variants="active" d="M13.3 18.3V23 M18.7 18.3V23" fill="none" stroke="#F2C879" stroke-width="2.4" stroke-linecap="round"/>
+</svg>
