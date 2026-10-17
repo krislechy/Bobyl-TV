@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 
 internal enum class FieldGlyph { Search, Clear, Microphone, Reply, Like, Delete, Send, More, MoreVertical, Refresh, Restore, Eye, Star, Play, Comments, Bookmark, Back }
+internal val LocalCompactFilmActions = staticCompositionLocalOf { false }
 
 /** Shared field surface; action buttons remain separate D-pad and accessibility targets. */
 @Composable
@@ -113,10 +114,11 @@ internal fun Input(
 
 @Composable
 internal fun FieldAction(glyph: FieldGlyph, label: String, primary: Boolean = false, enabled: Boolean = true, checked: Boolean = false, loading: Boolean = false, modifier: Modifier = Modifier, tooltip: Boolean = false, onClick: () -> Unit) {
+    val compact = LocalCompactFilmActions.current && glyph != FieldGlyph.Play
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(CinemaStyle.Corner)
     Box(
-        modifier.size(48.dp).clip(shape)
+        modifier.size(if (compact) 40.dp else 48.dp).clip(shape)
             .background(if (enabled && primary) CinemaStyle.Accent else CinemaStyle.Raised)
             .border(if (focused) 3.dp else 1.dp, if (focused) CinemaStyle.Focus else CinemaStyle.Outline, shape)
             .onFocusChanged { focused = it.isFocused }
@@ -127,15 +129,16 @@ internal fun FieldAction(glyph: FieldGlyph, label: String, primary: Boolean = fa
         if (loading) {
             val transition = rememberInfiniteTransition(label = "history-action")
             val angle by transition.animateFloat(0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing)), label = "spinner")
-            Canvas(Modifier.size(24.dp)) {
+            Canvas(Modifier.size(if (compact) 20.dp else 24.dp)) {
                 drawArc(CinemaStyle.Text, angle, 270f, false, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
             }
         }
-        else if (glyph == FieldGlyph.Eye) WatchStatusIcon(checked, enabled = enabled, action = true)
+        else if (glyph == FieldGlyph.Eye) WatchStatusIcon(checked, Modifier.size(if (compact) 26.dp else 32.dp), enabled = enabled, action = true)
         else FieldIcon(glyph, if (glyph == FieldGlyph.Bookmark && checked) CinemaStyle.Accent
             else if (glyph == FieldGlyph.Star && checked) Color(0xFFF4C85E)
             else if (!enabled) CinemaStyle.Muted else if (primary) CinemaStyle.OnAccent else CinemaStyle.Text,
-            Modifier.size(if (glyph == FieldGlyph.Star) 28.dp else if (glyph == FieldGlyph.Bookmark) 26.dp else 24.dp), filled = checked)
+            Modifier.size(if (compact) { if (glyph == FieldGlyph.Star) 24.dp else if (glyph == FieldGlyph.Bookmark) 22.dp else 20.dp }
+                else if (glyph == FieldGlyph.Star) 28.dp else if (glyph == FieldGlyph.Bookmark) 26.dp else 24.dp), filled = checked)
         if (tooltip) ActionTooltip(label, focused)
     }
 }

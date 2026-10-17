@@ -80,7 +80,6 @@ internal fun PlaybackSettings(player: String, choosePlayer: (String) -> Unit, co
                 catch (_: Exception) { message = "На устройстве нет экрана загрузок" }
             }
         }
-        AppUpdateSettings()
         SettingsSection("О приложении") {
             CinematicButton("Поделиться отчётом об ошибке", false) {
                 try {

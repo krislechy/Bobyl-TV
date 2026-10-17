@@ -175,6 +175,7 @@ internal fun ConnectedCatalog(menu: Int, startup: StartupViewModel, onStartupRea
                     SettingsSection("Аккаунт") {
                         key(provider) { AuthSettings(provider, auth) { sessionRevision++ } }
                     }
+                    AppUpdateSettings()
                     SettingsSection("Подключение") {
                     SettingsChoice("Зеркало сайта", listOf("hdrzk.org" to "По умолчанию", "hdrezka.ag" to "hdrezka.ag"), providerDraft) { providerDraft = it }
                     Input(providerDraft, "https://hdrzk.org", { providerDraft = it })
@@ -385,11 +386,9 @@ private fun DetailsDialog(provider: String, playerPackage: String, film: Catalog
                         if (target.requestFocus()) returnFocus = null
                     }
                 }
-                Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                CompositionLocalProvider(LocalActionTooltipRight provides true) {
-                LazyColumn(Modifier.width(96.dp).fillMaxHeight().focusGroup(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(8.dp)) {
+                CompositionLocalProvider(LocalCompactFilmActions provides true) {
+                LazyRow(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(4.dp)) {
                     if (info.playback != null) item { FieldAction(FieldGlyph.Play, "Смотреть", primary = true, modifier = Modifier.focusRequester(watchFocus), tooltip = true) { returnFocus = watchFocus; download = false; showPlayback = true } }
                     item { FieldAction(FieldGlyph.Comments, "Комментарии", modifier = Modifier.focusRequester(commentsFocus), tooltip = true) { returnFocus = commentsFocus; comments = true } }
                     item { FilmFavoriteButton(provider, info.id, film.url, info.bookmarks, favoriteFocus,
@@ -408,7 +407,7 @@ private fun DetailsDialog(provider: String, playerPackage: String, film: Catalog
                         FilmMoreMenu(moreMenuOpen, onExpandedChange = {
                             moreMenuOpen = it
                             if (it) returnFocus = moreFocus
-                        }, triggerFocus = moreFocus, canDownload = info.playback != null, busy = actionBusy, sideMenu = true,
+                        }, triggerFocus = moreFocus, canDownload = info.playback != null, busy = actionBusy,
                             onDownload = { download = true; showPlayback = true },
                             onTrailer = { if (!actionBusy) { actionBusy = true; scope.launch {
                                 try { openWeb(context, ExtrasRepository().trailer(provider, info.id)) }
@@ -431,7 +430,7 @@ private fun DetailsDialog(provider: String, playerPackage: String, film: Catalog
                     item { FieldAction(FieldGlyph.Back, "Назад", tooltip = true, onClick = dismiss) }
                 }
                 }
-                Box(Modifier.weight(1f).fillMaxHeight().onGloballyPositioned {
+                Box(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned {
                     viewportBottom = it.positionInRoot().y + it.size.height
                 }) {
                 Column(Modifier.fillMaxSize().verticalScroll(detailsScroll).padding(end = 18.dp),
@@ -509,7 +508,6 @@ private fun DetailsDialog(provider: String, playerPackage: String, film: Catalog
                         size = androidx.compose.ui.geometry.Size(size.width, thumb), cornerRadius = CornerRadius(size.width / 2))
                 }
                 }
-            }
             }
         }
         }

@@ -34,24 +34,26 @@ import com.bobyl.tv.data.CatalogFilm
 
 @Composable
 internal fun PersonalRatingButton(provider: String, filmId: String, entryFocus: FocusRequester, onClick: () -> Unit) {
+    val compact = LocalCompactFilmActions.current
+    val buttonSize = if (compact) 40.dp else 48.dp
     val model: PersonalRatingViewModel = viewModel(key = "personal-rating:$provider:$filmId")
     val state by model.state.collectAsState()
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(CinemaStyle.Corner)
     LaunchedEffect(provider, filmId) { model.load(provider, filmId) }
     if (state.loading) {
-        SkeletonShape(Modifier.size(48.dp))
+        SkeletonShape(Modifier.size(buttonSize))
         return
     }
     val rated = (state.value ?: 0) > 0
-    Row(Modifier.height(48.dp).widthIn(min = 48.dp).focusRequester(entryFocus).clip(shape)
+    Row(Modifier.height(buttonSize).widthIn(min = buttonSize).focusRequester(entryFocus).clip(shape)
         .background(CinemaStyle.Raised)
         .border(if (focused) 3.dp else 1.dp, if (focused) CinemaStyle.Focus else CinemaStyle.Outline, shape)
         .onFocusChanged { focused = it.isFocused }
         .clickable(onClickLabel = if (rated) "Изменить оценку ${state.value}" else "Оценить фильм", onClick = onClick)
-        .padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Canvas(Modifier.size(24.dp)) {
+        .padding(horizontal = if (compact) 10.dp else 12.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp)) {
+        Canvas(Modifier.size(if (compact) 20.dp else 24.dp)) {
             val u = size.minDimension / 24f
             val star = androidx.compose.ui.graphics.Path().apply {
                 moveTo(11f * u, 3f * u)
@@ -66,7 +68,7 @@ internal fun PersonalRatingButton(provider: String, filmId: String, entryFocus: 
                 drawLine(CinemaStyle.Accent, Offset(21f*u, 0f), Offset(21f*u, 4f*u), 1.6f*u, StrokeCap.Round)
             }
         }
-        if (rated) Text(state.value.toString(), color = CinemaStyle.Text, fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
+        if (rated) Text(state.value.toString(), color = CinemaStyle.Text, fontSize = if (compact) 18.sp else 21.sp, fontWeight = FontWeight.SemiBold)
         ActionTooltip(if (rated) "Изменить оценку: ${state.value}" else "Оценить фильм", focused)
     }
 }
