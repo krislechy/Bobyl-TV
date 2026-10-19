@@ -97,6 +97,7 @@ fun BobylTvApp() {
         mutableIntStateOf(startup.takeIf { id -> menu.any { it.id == id } } ?: 0)
     }
     var historyScreenRevision by remember { mutableIntStateOf(0) }
+    val foregroundRefreshRevision = rememberForegroundRefreshRevision()
     LaunchedEffect(selectedMenu) {
         if (menu.none { it.id == selectedMenu }) selectedMenu = 0
     }
@@ -163,7 +164,7 @@ fun BobylTvApp() {
                             .focusGroup()) {
                             ConnectedCatalog(selectedMenu, startup = startup,
                                 onStartupReady = { startup.primaryContentReady(); startupReady = true },
-                                onUpdateCount = startup::showUpdateCount, refreshRevision = historyScreenRevision)
+                                onUpdateCount = startup::showUpdateCount, refreshRevision = historyScreenRevision + foregroundRefreshRevision)
                         }
                     }
                 }

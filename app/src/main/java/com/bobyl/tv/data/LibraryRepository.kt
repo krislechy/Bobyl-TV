@@ -53,4 +53,24 @@ class LibraryRepository(private val transport: PageTransport = HtmlTransport()) 
         return ServerRatingResult(json.optString("num"), json.optString("votes"),
             PersonalRatingParser.parse(Jsoup.parse(json.optString("html")), fragment = true))
     }
+
+    internal suspend fun removeFromAll(provider: String, url: String): List<BookmarkCategory> {
+        val catalog = CatalogRepository(transport)
+        var details = catalog.details(url)
+        val filmId = details.id.ifBlank { historyFilmKey(url) }
+        require(filmId.isNotBlank() && filmId.all(Char::isDigit)) { "Не удалось определить фильм" }
+        val categoryIds = details.bookmarks.filter { it.checked }.map { it.id }
+        for (categoryId in categoryIds) {
+            // add_post toggles membership: always re-read before mutating, never add a removed film back.
+            details = catalog.details(url)
+            if (details.bookmarks.none { it.id == categoryId && it.checked }) continue
+            toggle(provider, filmId, categoryId)
+            details = catalog.details(url)
+            check(details.bookmarks.none { it.id == categoryId && it.checked }) {
+                "Сервер не подтвердил удаление. Попробуйте ещё раз."
+            }
+        }
+        check(details.bookmarks.none { it.checked }) { "Фильм ещё есть в избранном. Повторите удаление." }
+        return details.bookmarks
+    }
 }

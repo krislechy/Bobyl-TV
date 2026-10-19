@@ -15,6 +15,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -45,10 +47,16 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
     val repository = remember { PlaybackRepository() }
     val prefetch = remember(repository, scope) { EpisodePrefetch(repository, scope) }
     val episodePreview by prefetch.preview.collectAsState()
-    var step by remember { mutableStateOf(if (resumeRecord == null) PlaybackStep.Voice else PlaybackStep.Quality) }
-    var voice by remember { mutableStateOf(info.voices.firstOrNull { it.id == resumeRecord?.voice } ?: if (resumeRecord != null) info.voices.firstOrNull() else null) }
-    var season by remember { mutableStateOf(resumeRecord?.season.orEmpty()) }
-    var episode by remember { mutableStateOf(resumeRecord?.episode.orEmpty()) }
+    var step by rememberSaveable(stateSaver = Saver<PlaybackStep, String>(save = { it.name },
+        restore = { if (it == PlaybackStep.Subtitles.name) PlaybackStep.Quality else PlaybackStep.valueOf(it) })) {
+        mutableStateOf(if (resumeRecord == null) PlaybackStep.Voice else PlaybackStep.Quality)
+    }
+    var voice by rememberSaveable(stateSaver = Saver<VoiceOption?, String>(
+        save = { it?.id.orEmpty() }, restore = { id -> info.voices.firstOrNull { it.id == id } })) {
+        mutableStateOf(info.voices.firstOrNull { it.id == resumeRecord?.voice } ?: if (resumeRecord != null) info.voices.firstOrNull() else null)
+    }
+    var season by rememberSaveable { mutableStateOf(resumeRecord?.season.orEmpty()) }
+    var episode by rememberSaveable { mutableStateOf(resumeRecord?.episode.orEmpty()) }
     var seasons by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
     var choices by remember { mutableStateOf<StreamChoices?>(null) }
     val qualityStreams = remember(choices) { choices?.streams.orEmpty().sortedByDescending { qualityRank(it.label) } }
@@ -59,24 +67,24 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
     var retry by remember { mutableIntStateOf(0) }
     var notice by remember { mutableStateOf("") }
     var autoAdvance by remember { mutableStateOf(false) }
-    var lastQuality by remember { mutableStateOf("") }
-    var lastSubtitle by remember { mutableStateOf("") }
+    var lastQuality by rememberSaveable { mutableStateOf("") }
+    var lastSubtitle by rememberSaveable { mutableStateOf("") }
     var launchPending by remember { mutableStateOf(false) }
-    var resumePending by remember { mutableStateOf(resumeRecord != null) }
-    var pendingRecord by remember { mutableStateOf<WatchRecord?>(null) }
-    var relayPlayback by remember { mutableStateOf(false) }
+    var resumePending by rememberSaveable { mutableStateOf(resumeRecord != null) }
+    var pendingRecord by rememberSaveable(stateSaver = WatchRecordStateSaver) { mutableStateOf<WatchRecord?>(null) }
+    var relayPlayback by rememberSaveable { mutableStateOf(false) }
     var directPlaybackUrl by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(step) {
         if (step != PlaybackStep.Episode && step != PlaybackStep.Quality) prefetch.stop()
     }
-    var localSubtitlePlayback by remember { mutableStateOf(false) }
+    var localSubtitlePlayback by rememberSaveable { mutableStateOf(false) }
     val optionListState = rememberLazyListState()
     val firstOptionFocus = remember { FocusRequester() }
     val playerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val data = result.data
         val returnedUrl = data?.data?.toString()
         val returnedEpisode = if (relayPlayback) EpisodeRelayService.relay?.episodeFor(returnedUrl) else null
-        val wasRelay = relayPlayback && (returnedEpisode != null || returnedUrl != directPlaybackUrl)
+        val wasRelay = relayPlayback && (returnedEpisode != null || directPlaybackUrl == null || returnedUrl != directPlaybackUrl)
         // Never assign a different episode's position to the originally selected episode.
         val record = if (wasRelay) returnedEpisode?.let { pendingRecord?.copy(episode = it) } else pendingRecord
         if (relayPlayback || localSubtitlePlayback) {

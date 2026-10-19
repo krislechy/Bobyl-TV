@@ -85,6 +85,8 @@ class CatalogViewModel(
     private var job: Job? = null
     private var generation = 0L
     private var restoreThroughPage = 1
+    private var loadedAt = 0L
+    private var refreshPending = false
     private fun requestIdentity(request: CatalogRequest) = listOf(request.provider, request.section.name, request.query, request.kind)
     fun clear() {
         generation++
@@ -106,13 +108,23 @@ class CatalogViewModel(
         val current = mutableState.value
         val request = current.request ?: return
         if (current.loading || current.error == null) return
-        launchRequest(request, more = current.page > 0)
+        launchRequest(request, more = current.page > 0 && !refreshPending, refresh = refreshPending)
+    }
+
+    fun refreshIfStale(force: Boolean = false) {
+        val current = mutableState.value
+        val request = current.request ?: return
+        if (current.loading || current.error != null || loadedAt == 0L ||
+            (!force && android.os.SystemClock.elapsedRealtime() - loadedAt < com.bobyl.tv.data.PageCache.durationMillis())) return
+        restoreThroughPage = current.page.coerceAtLeast(1)
+        launchRequest(request, more = false, refresh = true)
     }
 
     fun load(provider: String, section: CatalogSection, query: String, kind: String = section.genre, sessionRevision: Int = 0) {
         val request = CatalogRequest(provider, section, query, kind, sessionRevision)
         // Recomposition and returning to the screen must not retry failures implicitly.
-        if (request == mutableState.value.request) return
+        if (request == mutableState.value.request) { refreshIfStale(); return }
+        refreshPending = false
         restoreThroughPage = if (mutableState.value.request == null &&
             savedStateHandle.get<List<String>>("loadedRequest") == requestIdentity(request)) {
             (savedStateHandle.get<Int>("loadedPage") ?: 1).coerceAtLeast(1)
@@ -122,11 +134,14 @@ class CatalogViewModel(
         launchRequest(request, more = false)
     }
 
-    private fun launchRequest(request: CatalogRequest, more: Boolean) {
+    private fun launchRequest(request: CatalogRequest, more: Boolean, refresh: Boolean = false) {
         val requestGeneration = ++generation
         job?.cancel()
+        val visible = mutableState.value
+        refreshPending = refresh
         var previous = if (more) mutableState.value else CatalogState(request = request)
-        mutableState.value = previous.copy(loading = true, error = null, restoring = restoreThroughPage > previous.page + 1)
+        mutableState.value = if (refresh) visible.copy(loading = true, error = null) else
+            previous.copy(loading = true, error = null, restoring = restoreThroughPage > previous.page + 1)
         job = viewModelScope.launch {
             try {
                 do {
@@ -143,11 +158,14 @@ class CatalogViewModel(
                 } while (previous.page < restoreThroughPage && previous.hasMore)
                 restoreThroughPage = 1
                 savedStateHandle["loadedPage"] = previous.page
+                if (!more) loadedAt = android.os.SystemClock.elapsedRealtime()
+                refreshPending = false
                 mutableState.value = previous
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                if (generation == requestGeneration) mutableState.value = previous.copy(loading = false, restoring = false, error = networkErrorMessage(error))
+                if (generation == requestGeneration) mutableState.value = (if (refresh) visible else previous)
+                    .copy(loading = false, restoring = false, error = networkErrorMessage(error))
             }
         }
     }

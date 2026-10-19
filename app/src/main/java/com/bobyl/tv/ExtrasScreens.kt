@@ -81,7 +81,7 @@ internal fun HistoryScreen(provider: String, resume: (WatchRecord) -> Unit, onRe
         else historyEntries(state.records, state.server).filter { it.watched == showWatched }
     }
     var pendingResume by remember { mutableStateOf<HistoryEntry?>(null) }
-    var ratingFilm by remember(provider) { mutableStateOf<CatalogFilm?>(null) }
+    var ratingFilm by rememberSaveable(provider, stateSaver = CatalogFilmStateSaver) { mutableStateOf<CatalogFilm?>(null) }
     pendingResume?.let { entry -> entry.position?.let { record ->
         ResumeHistoryPrompt(record, dismiss = { pendingResume = null }, openCard = {
             pendingResume = null
@@ -141,7 +141,7 @@ internal fun HistoryScreen(provider: String, resume: (WatchRecord) -> Unit, onRe
             Text(if (showWatched) "Просмотренных записей пока нет" else "Список «Продолжить» пуст", color = CinemaStyle.Muted)
         }
     }
-    ratingFilm?.let { FilmRatingDialog(provider, it, dismiss = { ratingFilm = null }) }
+    ratingFilm?.let { WatchedFilmDialogs(provider, it, dismiss = { ratingFilm = null }) }
 }
 
 @Composable

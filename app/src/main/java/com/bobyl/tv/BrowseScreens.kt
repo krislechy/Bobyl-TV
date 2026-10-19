@@ -61,13 +61,14 @@ internal fun CatalogTabs(options: List<Pair<String, String>>, selected: String, 
 
 @Composable
 internal fun PagedFilms(title: String, token: String, columns: Int, open: (CatalogFilm) -> Unit,
-    header: @Composable () -> Unit = {}, onReady: () -> Unit = {}, load: suspend (Int) -> List<CatalogFilm>) {
+    header: @Composable () -> Unit = {}, onReady: () -> Unit = {}, refreshRevision: Int = 0, load: suspend (Int) -> List<CatalogFilm>) {
     var films by remember(token) { mutableStateOf<List<CatalogFilm>>(emptyList()) }
     var page by rememberSaveable(token) { mutableIntStateOf(1) }
     var retry by remember { mutableIntStateOf(0) }
     var busy by remember(token) { mutableStateOf(true) }
     var more by remember(token) { mutableStateOf(true) }
     var error by remember(token) { mutableStateOf<String?>(null) }
+    var loadedRevision by remember(token) { mutableIntStateOf(refreshRevision) }
     var pendingFocus by rememberSaveable(token) { mutableStateOf("") }
     var waitForWindowLoss by remember(token) { mutableStateOf(false) }
     val windowFocused = androidx.compose.ui.platform.LocalWindowInfo.current.isWindowFocused
@@ -83,15 +84,22 @@ internal fun PagedFilms(title: String, token: String, columns: Int, open: (Catal
     val rows = remember(films, columns) { films.chunked(columns) }
     val listState = key(token) { rememberLazyListState() }
     val rowCount by rememberUpdatedState(rows.size)
-    LaunchedEffect(token, page, retry) {
+    LaunchedEffect(token, page, retry, refreshRevision) {
         busy = true; error = null
         try {
-            val next = if (films.isEmpty() && page > 1) buildList {
-                for (number in 1..page) addAll(currentLoad(number))
+            val reloadAll = loadedRevision != refreshRevision || (films.isEmpty() && page > 1)
+            var lastPageHasRows = false
+            val next = if (reloadAll) buildList {
+                for (number in 1..page) {
+                    val rows = currentLoad(number)
+                    lastPageHasRows = rows.isNotEmpty()
+                    addAll(rows)
+                }
             } else currentLoad(page)
-            val combined = (if (page == 1) next else films + next).distinctBy { it.url }
-            more = next.isNotEmpty() && (page == 1 || combined.size > films.size)
+            val combined = (if (reloadAll || page == 1) next else films + next).distinctBy { it.url }
+            more = if (reloadAll) lastPageHasRows else next.isNotEmpty() && (page == 1 || combined.size > films.size)
             films = combined
+            loadedRevision = refreshRevision
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) { error = networkErrorMessage(failure) }
         finally { busy = false }
@@ -165,7 +173,7 @@ internal fun PagedFilms(title: String, token: String, columns: Int, open: (Catal
 }
 
 @Composable
-internal fun CategoriesScreen(provider: String, columns: Int, onReady: () -> Unit = {}, open: (CatalogFilm) -> Unit) {
+internal fun CategoriesScreen(provider: String, columns: Int, onReady: () -> Unit = {}, refreshRevision: Int = 0, open: (CatalogFilm) -> Unit) {
     val repository = remember { BrowseRepository() }
     var filters by remember(provider) { mutableStateOf<BrowseFilters?>(null) }
     var categoryUrl by rememberSaveable(provider) { mutableStateOf("") }
@@ -173,9 +181,9 @@ internal fun CategoriesScreen(provider: String, columns: Int, onReady: () -> Uni
     var year by rememberSaveable(provider) { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var retry by remember { mutableIntStateOf(0) }
-    LaunchedEffect(provider, retry) {
+    LaunchedEffect(provider, retry, refreshRevision) {
         error = null
-        try { filters = repository.filters(provider, force = retry > 0); if (categoryUrl.isBlank()) categoryUrl = filters?.categories?.firstOrNull()?.url.orEmpty() }
+        try { filters = repository.filters(provider, force = retry > 0 || refreshRevision > 0); if (categoryUrl.isBlank()) categoryUrl = filters?.categories?.firstOrNull()?.url.orEmpty() }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) { error = networkErrorMessage(failure) }
     }
@@ -191,7 +199,7 @@ internal fun CategoriesScreen(provider: String, columns: Int, onReady: () -> Uni
             SkeletonLoading(SkeletonLayout.Posters, rows = 2, columns = columns)
         }
         else { Text(error ?: "Сайт не предоставил категории", color = Color.White); CinematicButton("Повторить", true) { retry++ } }
-    } else PagedFilms("Категории", "$provider|$categoryUrl|$genre|$year", columns, open, onReady = onReady, header = {
+    } else PagedFilms("Категории", "$provider|$categoryUrl|$genre|$year", columns, open, onReady = onReady, refreshRevision = refreshRevision, header = {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             CatalogTabs(filters!!.categories.map { it.url to it.title }, categoryUrl) { categoryUrl = it; genre = "" }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {

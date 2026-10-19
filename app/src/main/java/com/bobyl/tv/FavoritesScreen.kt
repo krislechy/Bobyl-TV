@@ -88,7 +88,7 @@ internal fun FavoritesScreen(provider: String, columns: Int, revision: Int, onRe
         header()
         if (busy) SkeletonLoading(SkeletonLayout.Posters, rows = 2, columns = columns)
         if (!busy && error.isBlank()) Text("Нет доступных списков. Войдите в настройках или создайте список.", color = Color.LightGray)
-    } else PagedFilms("Избранное", "$provider|${category.id}|$sort|$kind|$revision|$retry", columns, open, header, onReady = onReady) {
+    } else PagedFilms("Избранное", "$provider|${category.id}|$sort|$kind|$retry", columns, open, header, onReady = onReady, refreshRevision = revision) {
         repository.films(category, it, sort, kind)
     }
 }

@@ -104,11 +104,16 @@ internal fun ConnectedCatalog(menu: Int, startup: StartupViewModel, onStartupRea
         else -> CatalogSection.Latest
     }
     val activeQuery = if (menu == 4) selection.query else ""
-    var detail by remember { mutableStateOf<CatalogFilm?>(null) }
-    var resumeRecord by remember { mutableStateOf<WatchRecord?>(null) }
+    var detail by rememberSaveable(provider, stateSaver = CatalogFilmStateSaver) { mutableStateOf<CatalogFilm?>(null) }
+    var resumeRecord by rememberSaveable(provider, stateSaver = WatchRecordStateSaver) { mutableStateOf<WatchRecord?>(null) }
     var lastFocused by rememberSaveable(provider, section, activeQuery, selection.kind) { mutableStateOf("") }
     var pendingFocus by remember(provider, section, activeQuery, selection.kind) { mutableStateOf(lastFocused) }
     var libraryRevision by remember { mutableIntStateOf(0) }
+    var appliedRefreshRevision by remember { mutableIntStateOf(refreshRevision) }
+    var catalogRefreshRevision by remember { mutableIntStateOf(refreshRevision) }
+    LaunchedEffect(refreshRevision, detail) {
+        if (detail == null) appliedRefreshRevision = refreshRevision
+    }
     val kind = if (menu == 2) "2" else selection.kind
     val latestCatalogState by rememberUpdatedState(state)
     val catalogListState = rememberLazyListState()
@@ -125,9 +130,13 @@ internal fun ConnectedCatalog(menu: Int, startup: StartupViewModel, onStartupRea
             }
         }
     }
-    LaunchedEffect(menu, provider, activeQuery, section, sessionReady, sessionRevision, kind) {
+    LaunchedEffect(menu, provider, activeQuery, section, sessionReady, sessionRevision, kind, appliedRefreshRevision, detail != null) {
         if (menu == 4 && activeQuery.isBlank()) model.clear()
-        else if (sessionReady && menu in listOf(0, 1, 2, 4)) model.load(provider, section, activeQuery, kind = kind, sessionRevision = sessionRevision)
+        else if (sessionReady && detail == null && menu in listOf(0, 1, 2, 4)) {
+            model.load(provider, section, activeQuery, kind = kind, sessionRevision = sessionRevision)
+            if (catalogRefreshRevision != appliedRefreshRevision) model.refreshIfStale(force = true)
+            catalogRefreshRevision = appliedRefreshRevision
+        }
     }
     val currentOnStartupReady by rememberUpdatedState(onStartupReady)
     val startupReady = sessionReady && when (menu) {
@@ -140,7 +149,7 @@ internal fun ConnectedCatalog(menu: Int, startup: StartupViewModel, onStartupRea
     LaunchedEffect(startupReady) {
         if (startupReady) currentOnStartupReady()
     }
-    if (detail != null) DetailsDialog(provider, playerPackage, detail!!, resumeRecord) { detail = null; resumeRecord = null; libraryRevision++ }
+    if (sessionReady && detail != null) DetailsDialog(provider, playerPackage, detail!!, resumeRecord) { detail = null; resumeRecord = null; libraryRevision++ }
     // These screens start account requests when composed. Wait until cookies are restored.
     if (!sessionReady && menu in listOf(3, 6, 7, 8)) {
         Box(Modifier.fillMaxSize().padding(24.dp)) {
@@ -148,10 +157,10 @@ internal fun ConnectedCatalog(menu: Int, startup: StartupViewModel, onStartupRea
         }
         return
     }
-    if (menu == 3) { FavoritesScreen(provider, columns, libraryRevision, onReady = onStartupReady) { detail = it }; return }
-    if (menu == 6) { CategoriesScreen(provider, columns, onReady = onStartupReady) { detail = it }; return }
-    if (menu == 7) { HistoryScreen(provider, { record -> resumeRecord = record; detail = CatalogFilm(record.filmId, record.url, record.title, record.poster, "", "", "", "") }, onReady = onStartupReady, refreshRevision = refreshRevision) { detail = it }; return }
-    if (menu == 8) { UpdatesScreen(provider, onReady = onStartupReady, onUpdateCount = onUpdateCount, refreshRevision = refreshRevision) { detail = it }; return }
+    if (menu == 3) { FavoritesScreen(provider, columns, libraryRevision + appliedRefreshRevision, onReady = onStartupReady) { detail = it }; return }
+    if (menu == 6) { CategoriesScreen(provider, columns, onReady = onStartupReady, refreshRevision = appliedRefreshRevision) { detail = it }; return }
+    if (menu == 7) { HistoryScreen(provider, { record -> resumeRecord = record; detail = CatalogFilm(record.filmId, record.url, record.title, record.poster, "", "", "", "") }, onReady = onStartupReady, refreshRevision = appliedRefreshRevision) { detail = it }; return }
+    if (menu == 8) { UpdatesScreen(provider, onReady = onStartupReady, onUpdateCount = onUpdateCount, refreshRevision = appliedRefreshRevision) { detail = it }; return }
 
     // Do not measure a short, partially restored list: it would clamp saved scroll state.
     if (state.restoring) {
@@ -309,16 +318,17 @@ private fun DetailsDialog(provider: String, playerPackage: String, film: Catalog
     val historyModel: FilmHistoryViewModel = viewModel(key = "film-history:$provider:${film.url}")
     val historyState by historyModel.state.collectAsState()
     val historyRevision by ServerHistoryChanges.revision.collectAsState()
-    var childFilm by remember(film.url) { mutableStateOf<CatalogFilm?>(null) }
+    var childFilm by rememberSaveable(film.url, stateSaver = CatalogFilmStateSaver) { mutableStateOf<CatalogFilm?>(null) }
     var linkedCatalog by remember(film.url) { mutableStateOf<BrowseLink?>(null) }
     val inputMode = androidx.compose.ui.platform.LocalInputModeManager.current
     var person by remember(film.url) { mutableStateOf<Person?>(null) }
     var comments by remember { mutableStateOf(false) }
-    var showRatingPrompt by remember(film.url) { mutableStateOf(false) }
+    var showRatingPrompt by rememberSaveable(film.url) { mutableStateOf(false) }
+    var showWatchedDialogs by rememberSaveable(film.url) { mutableStateOf(false) }
     var details by remember(film.url) { mutableStateOf<FilmDetails?>(null) }
     var error by remember(film.url) { mutableStateOf<String?>(null) }
     var retry by remember { mutableIntStateOf(0) }
-    var showPlayback by remember { mutableStateOf(resumeRecord != null) }
+    var showPlayback by rememberSaveable(provider, film.url) { mutableStateOf(resumeRecord != null) }
     LaunchedEffect(provider, film.url, historyRevision, showPlayback) {
         if (!showPlayback) historyModel.load(provider, film.url)
     }
@@ -378,8 +388,8 @@ private fun DetailsDialog(provider: String, playerPackage: String, film: Catalog
                 CinematicButton("Повторить", true) { retry++ }
             }
             details?.let { info ->
-                LaunchedEffect(info.playback, showPlayback, childFilm, linkedCatalog, person, comments, windowFocused, moreMenuOpen, showRatingPrompt) {
-                    if (windowFocused && !showRatingPrompt && !moreMenuOpen && !showPlayback && childFilm == null && linkedCatalog == null && person == null && !comments) {
+                LaunchedEffect(info.playback, showPlayback, childFilm, linkedCatalog, person, comments, windowFocused, moreMenuOpen, showRatingPrompt, showWatchedDialogs) {
+                    if (windowFocused && !showRatingPrompt && !showWatchedDialogs && !moreMenuOpen && !showPlayback && childFilm == null && linkedCatalog == null && person == null && !comments) {
                         withFrameNanos { }
                         inputMode.requestInputMode(androidx.compose.ui.input.InputMode.Keyboard)
                         val target = returnFocus ?: if (info.playback != null) watchFocus else commentsFocus
@@ -399,7 +409,7 @@ private fun DetailsDialog(provider: String, playerPackage: String, film: Catalog
                             enabled = !historyState.loading && !historyState.saving, checked = historyState.watched,
                             loading = historyState.saving, modifier = Modifier.focusRequester(watchedFocus), tooltip = true) {
                             returnFocus = watchedFocus
-                            if (!historyState.watched) showRatingPrompt = true
+                            if (!historyState.watched) showWatchedDialogs = true
                             historyModel.setWatched(provider, film.copy(id = info.id, title = info.title,
                                 poster = info.poster.ifBlank { film.poster }), !historyState.watched)
                         }
@@ -511,6 +521,11 @@ private fun DetailsDialog(provider: String, playerPackage: String, film: Catalog
             }
         }
         }
+    }
+    if (showWatchedDialogs) details?.let { info ->
+        WatchedFilmDialogs(provider, film.copy(id = info.id, title = info.title), dismiss = { showWatchedDialogs = false },
+            onBookmarksRemoved = { categories -> details = details?.copy(bookmarks = categories) },
+            onRated = { result -> details = details?.copy(siteRating = result.first, siteVotes = result.second) })
     }
     if (showRatingPrompt) details?.let { info ->
         FilmRatingDialog(provider, film.copy(id = info.id, title = info.title), dismiss = { showRatingPrompt = false }) { result ->
