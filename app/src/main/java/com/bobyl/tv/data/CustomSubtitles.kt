@@ -18,6 +18,15 @@ class CustomSubtitles(private val context: Context) {
         const val RELATIVE_PATH = "Documents/Bobyl/Subtitles"
         fun supported(name: String) = name.substringAfterLast('.', "").lowercase() in setOf("srt", "ass", "ssa", "vtt")
         fun validId(id: String) = id.matches(Regex("[0-9]+"))
+        internal fun filesForFilm(films: File, id: String): List<File> {
+            if (!validId(id)) return emptyList()
+            val film = File(films, id)
+            if (!film.exists()) return emptyList()
+            check(film.canonicalFile.parentFile == films.canonicalFile) { "Недопустимый путь субтитров" }
+            val files = checkNotNull(film.listFiles()) { "Не удалось прочитать папку субтитров фильма" }
+            return files.filter { it.isFile && supported(it.name) && it.canRead() && it.canonicalFile.parentFile == film.canonicalFile }
+                .sortedBy { it.name.lowercase() }
+        }
     }
     @Suppress("DEPRECATION")
     val root: File get() = File(Environment.getExternalStorageDirectory(), RELATIVE_PATH)
@@ -32,14 +41,7 @@ class CustomSubtitles(private val context: Context) {
     suspend fun forFilm(id: String): List<CustomSubtitle> {
         if (!validId(id)) return emptyList()
         val films = ensureDirectory()
-        val files = runInterruptible(Dispatchers.IO) {
-            val film = File(films, id)
-            if (!film.exists()) return@runInterruptible emptyList()
-            check(film.canonicalFile.parentFile == films.canonicalFile) { "Недопустимый путь субтитров" }
-            val files = checkNotNull(film.listFiles()) { "Не удалось прочитать папку субтитров фильма" }
-            files.filter { it.isFile && supported(it.name) && it.canRead() && it.canonicalFile.parentFile == film.canonicalFile }
-                .sortedBy { it.name.lowercase() }
-        }
+        val files = runInterruptible(Dispatchers.IO) { filesForFilm(films, id) }
         LocalFileIndex.customSubtitles(id, files)
         return files.map { CustomSubtitle(it.name, FileProvider.getUriForFile(context, "${context.packageName}.files", it)) }
     }

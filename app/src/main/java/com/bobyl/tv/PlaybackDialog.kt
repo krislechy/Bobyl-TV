@@ -205,35 +205,14 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
                             emptyList()
                         }
                     } else emptyList()
-                    if (BuildConfig.DEBUG && customSubtitles.isNotEmpty()) {
-                        val files = customSubtitles
-                        val localServer = acquirePlaybackResource(interruptible = true, create = {
-                            check(files.size <= 32) { "В папке слишком много субтитров (максимум 32)" }
-                            var total = 0L
-                            val snapshots = files.map { track ->
-                                val bytes = context.contentResolver.openInputStream(track.uri)?.use { input ->
-                                    val output = java.io.ByteArrayOutputStream()
-                                    val buffer = ByteArray(8192)
-                                    while (true) {
-                                        val count = input.read(buffer)
-                                        if (count < 0) break
-                                        total += count
-                                        check(output.size() + count <= 4 * 1024 * 1024 && total <= 16 * 1024 * 1024) { "Локальные субтитры слишком большие" }
-                                        output.write(buffer, 0, count)
-                                    }
-                                    output.toByteArray()
-                                } ?: error("Не удалось открыть локальные субтитры")
-                                track.name to bytes
-                            }
-                            LocalSubtitleServer(snapshots)
-                        }, adopt = { server ->
-                            EpisodeRelayService.closeSession()
-                            EpisodeRelayService.subtitleServer = server
-                            localSubtitlePlayback = true
-                            preparedResources = true
-                        })
+                    customSubtitles = prepareCustomSubtitlePlayback(context, customSubtitles) { server ->
+                        EpisodeRelayService.closeSession()
+                        EpisodeRelayService.subtitleServer = server
+                        localSubtitlePlayback = true
+                        preparedResources = true
+                    }
+                    if (customSubtitles.isNotEmpty()) {
                         androidx.core.content.ContextCompat.startForegroundService(context, Intent(context, EpisodeRelayService::class.java))
-                        customSubtitles = files.mapIndexed { index, track -> track.copy(uri = Uri.parse(localServer.urls[index])) }
                     }
                     val intent = externalVideoIntent(context, chosen, subtitle, if (info.isMovie) title else "Сезон $season — Серия $episode • $title", chosenPlayer, resume, localSub, decoder.toByte(), customSubtitles)
                     directPlaybackUrl = chosen.url
@@ -594,6 +573,36 @@ internal fun externalVideoIntent(context: Context, stream: MediaTrack, subtitle:
 
 /** Append after MX-specific configuration so it cannot replace the additional tracks. */
 @Suppress("DEPRECATION")
+/** MX ignores content:// subtitle extras; every build needs session HTTP URLs. */
+internal suspend fun prepareCustomSubtitlePlayback(
+    context: android.content.Context,
+    tracks: List<CustomSubtitle>,
+    adopt: (LocalSubtitleServer) -> Unit,
+): List<CustomSubtitle> {
+    if (tracks.isEmpty()) return emptyList()
+    val server = acquirePlaybackResource(interruptible = true, create = {
+        check(tracks.size <= 32) { "В папке слишком много субтитров (максимум 32)" }
+        var total = 0L
+        val snapshots = tracks.map { track ->
+            val bytes = context.contentResolver.openInputStream(track.uri)?.use { input ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    total += count
+                    check(output.size() + count <= 4 * 1024 * 1024 && total <= 16 * 1024 * 1024) { "Локальные субтитры слишком большие" }
+                    output.write(buffer, 0, count)
+                }
+                output.toByteArray()
+            } ?: error("Не удалось открыть локальные субтитры")
+            track.name to bytes
+        }
+        LocalSubtitleServer(snapshots)
+    }, adopt = adopt)
+    return tracks.mapIndexed { index, track -> track.copy(uri = Uri.parse(server.urls[index])) }
+}
+
 internal fun appendCustomSubtitles(intent: Intent, tracks: List<CustomSubtitle>) {
     if (tracks.isEmpty()) return
     val existing = intent.getParcelableArrayExtra("subs").orEmpty().filterIsInstance<Uri>()

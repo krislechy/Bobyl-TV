@@ -1,16 +1,21 @@
 # Additional film subtitles
 
-Dev correction: MX 3.2.1 ignores content URIs in `subs` (C18025p.m38280k0).
-Dev now snapshots the local tracks and serves them via a tokenized loopback HTTP
+MX 3.2.1 ignores content URIs in `subs` (C18025p.m38280k0).
+All build modes, including non-debuggable Dev and Production, snapshot every
+supported local track and serve it via a tokenized loopback HTTP
 server for the external playback session. GET/HEAD return original bytes; no CDN
 or API request is made for local tracks. Server tracks/active selection remain
 unchanged. Limits: 32 files, 4 MiB per file, 16 MiB total. The existing foreground
-service keeps it alive and closes it on player return/stop/expiry. Release retains
-the previous implementation; runtime MX verification remains to be performed.
+service keeps it alive and closes it on player return/stop/expiry. These limits
+reject an oversized set explicitly rather than silently dropping some tracks.
+Runtime MX verification remains separate from the transport and Intent tests.
 
 The fixed root is shared storage `Documents/Bobyl/Subtitles`; no folder picker is
 used. Populate `<root>/films/<film ID>/` with SRT, ASS, SSA or VTT
-files, e.g. `films/88449/Українська.srt`. The feature reads existing files; it does
+files, e.g. `films/5104/Русский.srt` for `/5104-devyat-2009.html`. Only the exact
+numeric film ID directory is read; other films and nested directories are excluded.
+All readable supported files in that directory are included, regardless of their
+language or filename. The feature reads existing files; it does
 not download, replace or relocate server subtitles, and does not process series.
 
 On movie launch the directory is queried on IO. Missing directories mean no
