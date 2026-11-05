@@ -21,62 +21,70 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun FavoritesScreen(provider: String, columns: Int, revision: Int, onReady: () -> Unit = {}, open: (CatalogFilm) -> Unit) {
+internal fun FavoritesScreen(provider: String, columns: Int, revision: Int, onReady: () -> Unit = {}, sessionRevision: Int = 0,
+    detailOpen: Boolean = false, open: (CatalogFilm) -> Unit) {
     val repository = remember { LibraryRepository() }
-    var categories by remember(provider) { mutableStateOf<List<BookmarkCategory>>(emptyList()) }
-    var selectedId by rememberSaveable(provider) { mutableStateOf("") }
-    var sort by rememberSaveable { mutableStateOf("added") }
-    var kind by rememberSaveable { mutableStateOf("0") }
+    val model: FavoritesViewModel = androidx.lifecycle.viewmodel.compose.viewModel(key = "favorites-screen")
+    val snapshot by model.state.collectAsState()
+    val session = AccountSessionGuard.shared.current(provider)
+    val state = snapshot.takeIf { it.session == session } ?: FavoritesState(session = session)
+    val categories = state.categories
+    var selectedId by rememberSaveable(provider, sessionRevision) { mutableStateOf("") }
+    var sort by rememberSaveable(provider, sessionRevision) { mutableStateOf("added") }
+    var kind by rememberSaveable(provider, sessionRevision) { mutableStateOf("0") }
     var newName by remember { mutableStateOf("") }
     var creating by remember { mutableStateOf(false) }
-    var busy by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf("") }
-    var retry by remember { mutableIntStateOf(0) }
+    var createBusy by remember { mutableStateOf(false) }
+    var createError by remember { mutableStateOf("") }
+    val busy = state.busy || createBusy
+    val error = createError.ifBlank { state.error }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(provider, revision, retry) {
-        busy = true; error = ""
-        try {
-            categories = repository.categories(provider, force = retry > 0 || revision > 0)
-            if (categories.none { it.id == selectedId }) selectedId = categories.firstOrNull()?.id.orEmpty()
-        } catch (cancelled: CancellationException) { throw cancelled }
-        catch (failure: Exception) { error = networkErrorMessage(failure) }
-        finally { busy = false }
+    LaunchedEffect(provider, sessionRevision, revision, detailOpen, state.dirty, state.busy) {
+        if (!detailOpen) model.open(provider, revision)
     }
+    LaunchedEffect(categories) { if (categories.none { it.id == selectedId }) selectedId = categories.firstOrNull()?.id.orEmpty() }
     if (creating) Dialog({ creating = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        CinemaFocusFrameHost {
         Column(Modifier.widthIn(max = 440.dp).fillMaxWidth()
-            .clip(RoundedCornerShape(CinemaStyle.PanelCorner)).background(CinemaStyle.Background).padding(24.dp),
+            .cinemaSurface(focused = false, shape = RoundedCornerShape(CinemaStyle.PanelCorner)).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Новый список", color = CinemaStyle.Text, fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
             Input(newName, "Название списка", { if (!busy) newName = it })
             if (busy) LoadingIndicator("Сохраняем…")
-            if (error.isNotBlank()) Text(error, color = Color(0xFFFFB5B9))
+            if (error.isNotBlank()) Text(error, color = CinemaStyle.Error)
+            CinemaButtonFocusGroup {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)) {
                 CinematicButton("Отмена", false) { creating = false }
                 CinematicButton("Создать", true) {
-                    if (!busy && newName.isNotBlank()) { busy = true; scope.launch {
-                        try { repository.create(provider, newName); newName = ""; creating = false; retry++ }
+                    if (!busy && newName.isNotBlank()) { createBusy = true; createError = ""; scope.launch {
+                        try { repository.create(session, newName); newName = ""; creating = false; model.open(provider, revision) }
                         catch (cancelled: CancellationException) { throw cancelled }
-                        catch (failure: Exception) { error = networkErrorMessage(failure) }
-                        finally { busy = false }
+                        catch (failure: Exception) { createError = networkErrorMessage(failure) }
+                        finally { createBusy = false }
                     } }
                 }
             }
         }
+        }
+        }
     }
     val header: @Composable () -> Unit = {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            if (categories.isNotEmpty()) CatalogTabs(categories.map { it.id to "${it.name} (${it.count})" }, selectedId) { selectedId = it }
-            CatalogTabs(contentTypes, kind) { kind = it }
+            if (categories.isNotEmpty()) CatalogTabs(categories.map { it.id to "${it.name} (${it.count})" }, selectedId,
+                separateAll = categories.firstOrNull()?.let(::isAllBookmarkCategory) == true) { selectedId = it }
+            CatalogTabs(contentTypes, kind, separateAll = true) { kind = it }
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) {
                     SettingsChoice("Сортировка", listOf("added" to "По добавлению", "year" to "По году", "popular" to "По популярности"), sort, compactPopup = true) { sort = it }
                 }
                 Spacer(Modifier.width(1.dp).height(32.dp).background(CinemaStyle.Outline))
-                CinematicButton("Создать список", true) { if (!busy) creating = true }
-                CinematicButton("Обновить", false) { if (!busy) retry++ }
+                CinemaButtonFocusGroup {
+                    CinematicButton("Создать список", true) { if (!busy) creating = true }
+                    CinematicButton("Обновить", false) { if (!busy) { createError = ""; model.retry(provider) } }
+                }
             }
             if (busy && categories.isEmpty()) SkeletonLoading(SkeletonLayout.Tabs)
-            if (error.isNotBlank()) Text(error, color = Color(0xFFFFB5B9))
+            if (error.isNotBlank()) Text(error, color = CinemaStyle.Error)
         }
     }
     val category = categories.firstOrNull { it.id == selectedId }
@@ -84,12 +92,13 @@ internal fun FavoritesScreen(provider: String, columns: Int, revision: Int, onRe
     LaunchedEffect(busy, category) {
         if (!busy && category == null) currentOnReady()
     }
-    if (category == null) Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    if (category == null) Column(Modifier.padding(start = CinemaContentHorizontal, end = CinemaContentHorizontal, top = CinemaContentTop), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         header()
         if (busy) SkeletonLoading(SkeletonLayout.Posters, rows = 2, columns = columns)
-        if (!busy && error.isBlank()) Text("Нет доступных списков. Войдите в настройках или создайте список.", color = Color.LightGray)
-    } else PagedFilms("Избранное", "$provider|${category.id}|$sort|$kind|$retry", columns, open, header, onReady = onReady, refreshRevision = revision) {
-        repository.films(category, it, sort, kind)
+        if (!busy && error.isBlank()) Text("Нет списков", color = CinemaStyle.Muted)
+    } else PagedFilms("Избранное", "$provider|$sessionRevision|${category.id}|$sort|$kind", columns, open, header,
+        onReady = onReady, refreshRevision = state.contentRevision, requestSession = session) { page, force ->
+        repository.films(category, page, sort, kind, force)
     }
 }
 

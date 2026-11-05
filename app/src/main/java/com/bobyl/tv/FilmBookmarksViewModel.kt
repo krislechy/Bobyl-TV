@@ -13,7 +13,7 @@ import kotlinx.coroutines.withContext
 internal data class FilmBookmarksState(val categories: List<BookmarkCategory> = emptyList(),
     val saving: Boolean = false, val error: String = "", val revision: Int = 0)
 
-internal class FilmBookmarksViewModel : ViewModel() {
+internal class FilmBookmarksViewModel(private val actions: FilmActionsViewModel, private val actionKey: FilmActionKey) : ViewModel() {
     private val mutableState = MutableStateFlow(FilmBookmarksState())
     val state = mutableState.asStateFlow()
 
@@ -26,17 +26,11 @@ internal class FilmBookmarksViewModel : ViewModel() {
     fun toggle(provider: String, filmId: String, url: String, category: BookmarkCategory) {
         val before = mutableState.value
         if (before.saving) return
-        mutableState.value = before.copy(saving = true, error = "")
+        val receipt = actions.toggle(actionKey, filmId, url, category)
+        mutableState.value = before.copy(saving = receipt.accepted, error = "")
         viewModelScope.launch {
             try {
-                val categories = withContext(Dispatchers.IO) {
-                    LibraryRepository().toggle(provider, filmId, category.id)
-                    CatalogRepository().details(url).bookmarks.also { updated ->
-                        check(updated.firstOrNull { it.id == category.id }?.checked == !category.checked) {
-                            "Сервер не подтвердил изменение избранного. Попробуйте ещё раз."
-                        }
-                    }
-                }
+                val categories = receipt.await()
                 mutableState.value = before.copy(categories = categories, revision = before.revision + 1)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { mutableState.value = before.copy(error = networkErrorMessage(failure)) }

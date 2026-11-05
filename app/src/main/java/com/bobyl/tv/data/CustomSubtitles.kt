@@ -32,15 +32,15 @@ class CustomSubtitles(private val context: Context) {
     suspend fun forFilm(id: String): List<CustomSubtitle> {
         if (!validId(id)) return emptyList()
         val films = ensureDirectory()
-        return runInterruptible(Dispatchers.IO) {
+        val files = runInterruptible(Dispatchers.IO) {
             val film = File(films, id)
             if (!film.exists()) return@runInterruptible emptyList()
             check(film.canonicalFile.parentFile == films.canonicalFile) { "Недопустимый путь субтитров" }
             val files = checkNotNull(film.listFiles()) { "Не удалось прочитать папку субтитров фильма" }
             files.filter { it.isFile && supported(it.name) && it.canRead() && it.canonicalFile.parentFile == film.canonicalFile }
-                .sortedBy { it.name.lowercase() }.map {
-                    CustomSubtitle(it.name, FileProvider.getUriForFile(context, "${context.packageName}.files", it))
-                }
+                .sortedBy { it.name.lowercase() }
         }
+        LocalFileIndex.customSubtitles(id, files)
+        return files.map { CustomSubtitle(it.name, FileProvider.getUriForFile(context, "${context.packageName}.files", it)) }
     }
 }

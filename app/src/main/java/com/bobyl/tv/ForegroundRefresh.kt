@@ -2,17 +2,20 @@ package com.bobyl.tv
 
 import android.os.SystemClock
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.bobyl.tv.data.PageCache
+import com.bobyl.tv.data.PersistentCache
 import kotlinx.coroutines.delay
 
 /** Re-check age on resume (including device sleep), without polling while the app is stopped. */
 @Composable
 internal fun rememberForegroundRefreshRevision(): Int {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    var revision by remember { mutableIntStateOf(0) }
+    var revision by rememberSaveable { mutableIntStateOf(0) }
+    val userClear by PersistentCache.userClearRevision.collectAsState()
     LaunchedEffect(lifecycle) {
         var refreshedAt = SystemClock.elapsedRealtime()
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -31,5 +34,5 @@ internal fun rememberForegroundRefreshRevision(): Int {
             }
         }
     }
-    return revision
+    return revision + userClear
 }

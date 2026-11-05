@@ -14,13 +14,13 @@ import androidx.tv.material3.Text
 import com.bobyl.tv.data.GitHubAppUpdates
 
 @Composable
-internal fun AppUpdateSettings() {
+internal fun AppUpdateSettings(first: Boolean = false) {
     if (!GitHubAppUpdates.enabled) return
     val context = LocalContext.current
     val model: AppUpdateViewModel = viewModel()
     val state by model.state.collectAsState()
     var installError by remember { mutableStateOf("") }
-    SettingsSection("Обновление приложения") {
+    SettingsSection("Обновление приложения", first = first) {
         if (state.checking) LoadingIndicator("Проверяем обновления…")
         else if (state.downloading) LoadingIndicator("Загрузка: ${state.progress}%")
         else {
@@ -44,6 +44,6 @@ internal fun AppUpdateSettings() {
         }
         if (state.message.isNotBlank()) Text(state.message, color = CinemaStyle.Muted, fontSize = 14.sp)
         if (state.error.isNotBlank() || installError.isNotBlank()) Text(listOf(state.error, installError).filter { it.isNotBlank() }.joinToString("\n"),
-            color = Color(0xFFFFB5B9), fontSize = 14.sp)
+            color = CinemaStyle.Error, fontSize = 14.sp)
     }
 }

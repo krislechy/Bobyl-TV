@@ -89,7 +89,13 @@ class ParityTest {
         catch (_: IllegalStateException) { }
     }
     @Test fun ratingUpdatesBothValues() = runBlocking {
-        assertEquals("8.5" to "101", LibraryRepository(Fake("{\"success\":true,\"num\":\"8.5\",\"votes\":\"101\"}")).rate("hdrzk.org", "42", 8))
+        val fake = Fake("{\"success\":true,\"num\":\"8.5\",\"votes\":\"101\"}")
+        assertEquals(ServerRatingResult("8.5", "101", null), LibraryRepository(fake).rate("hdrzk.org", "42", 8))
+        assertEquals("https://hdrzk.org/engine/ajax/rating.php?news_id=42&go_rate=8&skin=hdrezka", fake.url)
+    }
+    @Test fun ratingKeepsPersonalVoteSeparateFromPublicAverage() = runBlocking {
+        val fake = Fake("{\"success\":true,\"num\":\"8.5\",\"votes\":\"101\",\"html\":\"<span>Ваша оценка: 7</span>\"}")
+        assertEquals(ServerRatingResult("8.5", "101", 7), LibraryRepository(fake).rate("hdrzk.org", "42", 8))
     }
     @Test fun registrationEscapesNestedForm() {
         val data = AuthContract.registrationFields("a+b@example.org", "n&x", "p=+ &").getValue("data")

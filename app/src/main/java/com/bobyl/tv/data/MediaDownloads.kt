@@ -8,13 +8,15 @@ import android.os.Environment
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
 class MediaDownloads(private val context: Context) {
-    fun enqueue(track: MediaTrack, title: String, subtitle: Boolean = false): Long {
+    suspend fun enqueue(track: MediaTrack, title: String, subtitle: Boolean = false,
+        filmId: String? = null, provider: String? = null): Long = withContext(Dispatchers.IO) {
         require(PlaybackParser.isMediaUrl(track.url))
         require(subtitle || !Uri.parse(track.url).path.orEmpty().endsWith(".m3u8", true)) {
             "Это HLS-поток. Выберите внешний загрузчик с поддержкой HLS."
@@ -29,7 +31,11 @@ class MediaDownloads(private val context: Context) {
         val request = DownloadManager.Request(Uri.parse(track.url)).setTitle(title)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "Bobyl/$name")
-        return (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+        val id = (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+        @Suppress("DEPRECATION")
+        val path = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Bobyl/$name").absolutePath
+        LocalFileIndex.queuedDownload(id, title, path, localFileMimeType(name), track.url, filmId, provider)
+        id
     }
     fun external(track: MediaTrack) {
         require(PlaybackParser.isMediaUrl(track.url))
@@ -64,6 +70,10 @@ class MediaDownloads(private val context: Context) {
                 file.writeBytes(bytes)
             } finally { connection.disconnect() }
         }
+        file
+    }.let { file ->
+        LocalFileIndex.cachedSubtitle(file, track.url)
+        LocalFileIndex.reconcileCachedSubtitles()
         FileProvider.getUriForFile(context, "${context.packageName}.files", file)
     }
 }

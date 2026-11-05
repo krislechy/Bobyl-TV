@@ -1,6 +1,9 @@
 package com.bobyl.tv
 
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -20,9 +23,44 @@ import com.bobyl.tv.data.CatalogUrls
 import com.bobyl.tv.data.networkErrorMessage
 import com.bobyl.tv.data.AccountProfile
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.bobyl.tv.SkeletonAsyncImage as AsyncImage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+
+@Composable
+internal fun AccountDialog(provider: String, auth: AuthRepository, changed: () -> Unit, dismiss: () -> Unit) {
+    Dialog(dismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        CinemaFocusFrameHost {
+            val firstFocus = remember { FocusRequester() }
+            val backFocus = remember { FocusRequester() }
+            val windowFocused = LocalWindowInfo.current.isWindowFocused
+            LaunchedEffect(windowFocused) {
+                if (windowFocused) {
+                    withFrameNanos { }
+                    if (!firstFocus.requestFocus()) backFocus.requestFocus()
+                }
+            }
+            BoxWithConstraints(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                Column(Modifier.widthIn(max = 560.dp).fillMaxWidth().heightIn(max = maxHeight)
+                    .cinemaSurface(false, shape = RoundedCornerShape(CinemaStyle.PanelCorner)).padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text("Аккаунт", color = CinemaStyle.Text, fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
+                    Column(Modifier.weight(1f, fill = false).fillMaxWidth().focusRequester(firstFocus).focusGroup()
+                        .verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        key(provider) { AuthSettings(provider, auth, changed) }
+                    }
+                    CinematicButton("Назад", false, Modifier.focusRequester(backFocus), onClick = dismiss)
+                }
+            }
+        }
+    }
+}
 
 @Composable
 internal fun AuthSettings(provider: String, auth: AuthRepository, changed: () -> Unit) {
@@ -40,7 +78,14 @@ internal fun AuthSettings(provider: String, auth: AuthRepository, changed: () ->
     var checking by remember { mutableStateOf(true) }
     var message by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
-    web?.let { AccountWebDialog(it) { web = null; revision++ } }
+    val websiteSession = remember(web, provider) {
+        if (web != null) com.bobyl.tv.data.AccountSessionGuard.shared.current(provider) else null
+    }
+    web?.let { AccountWebDialog(it) {
+        web = null
+        revision++
+        if (websiteSession != com.bobyl.tv.data.AccountSessionGuard.shared.current(provider)) changed()
+    } }
     LaunchedEffect(provider, revision) {
         busy = true
         checking = true
@@ -49,7 +94,7 @@ internal fun AuthSettings(provider: String, auth: AuthRepository, changed: () ->
             if (account != null) {
                 profile = auth.profile(provider)
                 message = when (profile?.authenticated) {
-                    true -> "Вход подтверждён сервером"
+                    true -> ""
                     false -> { account = null; "Войдите в аккаунт заново." }
                     null -> "Не удалось определить состояние входа. Повторите проверку."
                 }
@@ -60,7 +105,7 @@ internal fun AuthSettings(provider: String, auth: AuthRepository, changed: () ->
         finally { busy = false; checking = false }
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(CatalogUrls.provider(provider), color = Color(0xFFACADB2), fontSize = 13.sp)
+        Text(CatalogUrls.provider(provider), color = CinemaStyle.Muted, fontSize = 13.sp)
         if (checking && profile == null) SkeletonLoading(SkeletonLayout.Profile)
         else if (account == null) {
             CinematicButton(if (registration) "Уже есть аккаунт — войти" else "Регистрация", false) { if (!busy) registration = !registration }
@@ -83,7 +128,7 @@ internal fun AuthSettings(provider: String, auth: AuthRepository, changed: () ->
                         try {
                             account = if (registration) auth.register(provider, email, submittedName, submittedPassword) else auth.login(provider, submittedName, submittedPassword)
                             password = ""
-                            message = "Вы вошли в аккаунт"
+                            message = ""
                             changed()
                             revision++
                         } catch (cancelled: CancellationException) { throw cancelled }
@@ -98,21 +143,22 @@ internal fun AuthSettings(provider: String, auth: AuthRepository, changed: () ->
                     AsyncImage(avatar, "Аватар", Modifier.size(64.dp).clip(CircleShape), contentScale = ContentScale.Crop)
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(account.orEmpty(), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
+                    Text(accountDisplayNickname(profile).ifBlank { "Аккаунт" }, color = CinemaStyle.Text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                     profile?.let { data ->
-                        Text(if (data.premium) "Premium • ${data.premiumInfo}" else "Premium не активен", color = Color(0xFFACADB2), fontSize = 14.sp)
+                        Text(if (data.premium) "Premium • ${homePremiumLabel(data.premiumInfo)}" else "Premium не активен", color = CinemaStyle.Muted, fontSize = 14.sp)
                     }
                 }
             }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(4.dp)) {
-            item { FieldAction(FieldGlyph.Refresh, "Проверить сессию и профиль", enabled = !busy) { revision++ } }
+            CinemaButtonFocusGroup {
+            LazyRow(Modifier.cinemaFilmViewport(), horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(4.dp)) {
+            item { FieldAction(FieldGlyph.Refresh, "Обновить", enabled = !busy) { revision++ } }
             item { CinematicButton("Premium / продление", false) { web = CatalogUrls.provider(provider) + "payments" } }
             item { CinematicButton("Выйти", false) {
                 if (!busy) {
                     busy = true
                     scope.launch {
-                        try { auth.logout(provider); account = null; password = ""; message = "Вы вышли"; changed() }
+                        try { auth.logout(provider); account = null; password = ""; message = ""; changed() }
                         catch (cancelled: CancellationException) { throw cancelled }
                         catch (error: Exception) { message = networkErrorMessage(error) }
                         finally { busy = false }
@@ -120,8 +166,9 @@ internal fun AuthSettings(provider: String, auth: AuthRepository, changed: () ->
                 }
             } }
             }
+            }
         }
         if (busy && !checking) LoadingIndicator("Сохраняем…")
-        if (message.isNotBlank()) Text(message, color = Color(0xFFD7D7DD), fontSize = 14.sp)
+        if (message.isNotBlank()) Text(message, color = CinemaStyle.Text, fontSize = 14.sp)
     }
 }

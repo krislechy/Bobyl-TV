@@ -2,6 +2,8 @@ package com.bobyl.tv.data
 
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class FilmComment(val id: String, val author: String, val date: String, val text: String,
     val likes: String, val liked: Boolean, val self: Boolean, val deleteHash: String, val depth: Int)
@@ -23,10 +25,13 @@ object CommentsParser {
 class CommentsRepository(private val transport: PageTransport = HtmlTransport()) {
     suspend fun load(provider: String, filmId: String, page: Int): List<FilmComment> {
         require(filmId.matches(Regex("[0-9]+")) && page > 0)
-        val json = responseJson(transport.get(CatalogUrls.provider(provider) +
-            "ajax/get_comments/?t=${System.currentTimeMillis()}&news_id=$filmId&cstart=$page&type=0&comment_id=0&skin=hdrezka"))
-        check(!json.has("success") || json.optBoolean("success")) { "Не удалось загрузить комментарии" }
-        return CommentsParser.parse(Jsoup.parse(json.optString("comments")))
+        val document = transport.get(CatalogUrls.provider(provider) +
+            "ajax/get_comments/?t=${System.currentTimeMillis()}&news_id=$filmId&cstart=$page&type=0&comment_id=0&skin=hdrezka")
+        return withContext(Dispatchers.Default) {
+            val json = responseJson(document)
+            check(!json.has("success") || json.optBoolean("success")) { "Не удалось загрузить комментарии" }
+            CommentsParser.parse(Jsoup.parse(json.optString("comments")))
+        }
     }
     suspend fun post(provider: String, filmId: String, text: String, parent: String): String {
         require(text.isNotBlank() && filmId.matches(Regex("[0-9]+")) && parent.matches(Regex("[0-9]+")))

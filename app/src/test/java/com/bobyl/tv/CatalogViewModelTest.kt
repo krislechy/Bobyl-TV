@@ -23,6 +23,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class CatalogViewModelTest {
     private val dispatcher = StandardTestDispatcher()
+    private val elapsedRealtime = { dispatcher.scheduler.currentTime + 1L }
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }
 
@@ -39,7 +40,7 @@ class CatalogViewModelTest {
         val model = CatalogViewModel({ _, _, page, _, _ ->
             calls += page
             if (page == 2) second.await() else listOf(film(page.toString()))
-        }, dispatcher, savedCatalog(3))
+        }, dispatcher, savedCatalog(3), elapsedRealtime)
         assertTrue(model.state.value.restoring)
         model.load("example.org", CatalogSection.Popular, "", kind = "0")
         runCurrent()
@@ -55,7 +56,7 @@ class CatalogViewModelTest {
 
     @Test fun changedFilterDoesNotRestorePagesFromOldCatalog() = runTest(dispatcher) {
         val calls = mutableListOf<Int>()
-        val model = CatalogViewModel({ _, _, page, _, _ -> calls += page; listOf(film("one")) }, dispatcher, savedCatalog(5))
+        val model = CatalogViewModel({ _, _, page, _, _ -> calls += page; listOf(film("one")) }, dispatcher, savedCatalog(5), elapsedRealtime)
         model.load("example.org", CatalogSection.Popular, "", kind = "2")
         advanceUntilIdle()
         assertEquals(listOf(1), calls)
@@ -69,7 +70,7 @@ class CatalogViewModelTest {
             calls += page
             if (page == 2 && fail) throw IOException("offline")
             listOf(film(page.toString()))
-        }, dispatcher, savedCatalog(3))
+        }, dispatcher, savedCatalog(3), elapsedRealtime)
         model.load("example.org", CatalogSection.Popular, "", kind = "0")
         advanceUntilIdle()
         assertEquals(1, model.state.value.page)
@@ -85,7 +86,7 @@ class CatalogViewModelTest {
     @Test fun selectionRestoresFromSavedValuesWithoutStartingNetwork() = runTest(dispatcher) {
         val saved = SavedStateHandle()
         var calls = 0
-        val model = CatalogViewModel({ _, _, _, _, _ -> calls++; emptyList() }, dispatcher, saved)
+        val model = CatalogViewModel({ _, _, _, _, _ -> calls++; emptyList() }, dispatcher, saved, elapsedRealtime)
         model.selectNewsSection(CatalogSection.Popular)
         model.selectKind("2")
         model.editSearch("  matrix  ")
@@ -94,6 +95,7 @@ class CatalogViewModelTest {
         val restored = CatalogViewModel(
             { _, _, _, _, _ -> calls++; emptyList() }, dispatcher,
             SavedStateHandle(saved.keys().associateWith { saved.get<Any?>(it) }),
+            elapsedRealtime,
         )
         assertEquals(model.selection.value, restored.selection.value)
         assertEquals("matrix", restored.selection.value.query)
@@ -103,7 +105,7 @@ class CatalogViewModelTest {
     }
 
     @Test fun editingDraftDoesNotReplaceSubmittedQuery() = runTest(dispatcher) {
-        val model = CatalogViewModel(computationDispatcher = dispatcher)
+        val model = CatalogViewModel(computationDispatcher = dispatcher, savedStateHandle = SavedStateHandle(), elapsedRealtime = elapsedRealtime)
         model.editSearch("first")
         model.submitSearch()
         model.editSearch("second")
@@ -115,7 +117,7 @@ class CatalogViewModelTest {
 
     @Test fun sessionRefreshReloadsOnceWithoutResettingSelection() = runTest(dispatcher) {
         var calls = 0
-        val model = CatalogViewModel({ _, _, _, _, _ -> calls++; listOf(film("one")) }, dispatcher)
+        val model = CatalogViewModel({ _, _, _, _, _ -> calls++; listOf(film("one")) }, dispatcher, SavedStateHandle(), elapsedRealtime = elapsedRealtime)
         model.selectKind("2")
         model.editSearch("draft")
         model.load("example.org", CatalogSection.Popular, "", kind = "2")
@@ -133,7 +135,7 @@ class CatalogViewModelTest {
         val model = CatalogViewModel({ _, _, page, _, _ ->
             calls += page
             if (page == 1) listOf(film("one")) else second.await()
-        }, dispatcher)
+        }, dispatcher, SavedStateHandle(), elapsedRealtime = elapsedRealtime)
         repeat(3) { model.load("example.org", CatalogSection.Popular, "") }
         advanceUntilIdle()
         model.load("example.org", CatalogSection.Popular, "")
@@ -153,7 +155,7 @@ class CatalogViewModelTest {
             calls += page
             if (page == 2 && fail) throw IOException("offline")
             listOf(film(page.toString()))
-        }, dispatcher)
+        }, dispatcher, SavedStateHandle(), elapsedRealtime = elapsedRealtime)
         model.load("example.org", CatalogSection.Popular, "")
         advanceUntilIdle()
         model.loadMore()
@@ -180,7 +182,7 @@ class CatalogViewModelTest {
                 throw IOException("late failure")
             }
             listOf(film(query))
-        }, dispatcher)
+        }, dispatcher, SavedStateHandle(), elapsedRealtime = elapsedRealtime)
         model.load("example.org", CatalogSection.Latest, "old")
         runCurrent()
         model.load("example.org", CatalogSection.Latest, "new")
@@ -198,7 +200,7 @@ class CatalogViewModelTest {
         val model = CatalogViewModel({ _, _, _, _, _ ->
             calls++
             withContext(NonCancellable) { response.await() }
-        }, dispatcher)
+        }, dispatcher, SavedStateHandle(), elapsedRealtime = elapsedRealtime)
         model.load("example.org", CatalogSection.Latest, "query")
         runCurrent()
         model.clear()
@@ -214,7 +216,7 @@ class CatalogViewModelTest {
 
     @Test fun duplicateOnlyPageStopsAutomaticPagination() = runTest(dispatcher) {
         var calls = 0
-        val model = CatalogViewModel({ _, _, _, _, _ -> calls++; listOf(film("same")) }, dispatcher)
+        val model = CatalogViewModel({ _, _, _, _, _ -> calls++; listOf(film("same")) }, dispatcher, SavedStateHandle(), elapsedRealtime = elapsedRealtime)
         model.load("example.org", CatalogSection.Popular, "")
         advanceUntilIdle()
         model.loadMore()
@@ -224,5 +226,79 @@ class CatalogViewModelTest {
         assertEquals(2, calls)
         assertEquals(1, model.state.value.films.size)
         assertFalse(model.state.value.hasMore)
+    }
+
+    @Test fun explicitRefreshUsesFreshLoaderForEveryLoadedPageAndNormalReentryDoesNot() = runTest(dispatcher) {
+        val normal = mutableListOf<Int>()
+        val fresh = mutableListOf<Int>()
+        val model = CatalogViewModel(loadPage = { _, _, page, _, _ -> normal += page; listOf(film("$page")) },
+            computationDispatcher = dispatcher, savedStateHandle = SavedStateHandle(), elapsedRealtime = elapsedRealtime,
+            loadFreshPage = { _, _, page, _, _ -> fresh += page; listOf(film("fresh$page")) })
+        model.load("example.org", CatalogSection.Popular, ""); advanceUntilIdle()
+        model.loadMore(); advanceUntilIdle()
+        model.load("example.org", CatalogSection.Popular, ""); advanceUntilIdle()
+        assertEquals(listOf(1, 2), normal)
+        assertTrue(fresh.isEmpty())
+        model.refreshIfStale(force = true); advanceUntilIdle()
+        assertEquals(listOf(1, 2), fresh)
+        assertEquals(listOf("fresh1", "fresh2"), model.state.value.films.map { it.id })
+    }
+
+    @Test fun manualClearMakesRetainedCatalogFetchFreshExactlyOnceOnReentry() = runTest(dispatcher) {
+        var epoch = 0
+        val normal = mutableListOf<Int>()
+        val fresh = mutableListOf<Int>()
+        val model = CatalogViewModel({ _, _, page, _, _ -> normal += page; listOf(film("old$page")) }, dispatcher,
+            SavedStateHandle(), elapsedRealtime, loadFreshPage = { _, _, page, _, _ -> fresh += page; listOf(film("fresh$page")) },
+            userClearRevision = { epoch })
+        model.load("example.org", CatalogSection.Popular, ""); advanceUntilIdle()
+        model.loadMore(); advanceUntilIdle()
+        epoch++
+        assertEquals(listOf("old1", "old2"), model.state.value.films.map { it.id })
+        model.load("example.org", CatalogSection.Popular, ""); advanceUntilIdle()
+        repeat(3) { model.load("example.org", CatalogSection.Popular, "") }; advanceUntilIdle()
+        assertEquals(listOf(1, 2), normal)
+        assertEquals(listOf(1, 2), fresh)
+        assertEquals(2, model.state.value.page)
+    }
+
+    @Test fun successiveClearsDuringInflightRequestsCannotBeAcknowledgedByOlderResponse() = runTest(dispatcher) {
+        var epoch = 0
+        val original = CompletableDeferred<List<CatalogFilm>>()
+        val firstFresh = CompletableDeferred<List<CatalogFilm>>()
+        var freshCalls = 0
+        val model = CatalogViewModel({ _, _, _, _, _ -> original.await() }, dispatcher, SavedStateHandle(), elapsedRealtime,
+            loadFreshPage = { _, _, _, _, _ -> if (++freshCalls == 1) firstFresh.await() else listOf(film("latest")) },
+            userClearRevision = { epoch })
+        model.load("example.org", CatalogSection.Popular, ""); runCurrent()
+        epoch = 1
+        model.load("example.org", CatalogSection.Popular, "")
+        original.complete(listOf(film("original"))); runCurrent()
+        assertEquals(1, freshCalls)
+        epoch = 2
+        model.load("example.org", CatalogSection.Popular, "")
+        firstFresh.complete(listOf(film("already-cleared"))); advanceUntilIdle()
+        assertEquals(2, freshCalls)
+        assertEquals("latest", model.state.value.films.single().id)
+        model.load("example.org", CatalogSection.Popular, ""); advanceUntilIdle()
+        assertEquals(2, freshCalls)
+    }
+
+    @Test fun failedRefreshAfterClearRetainsRowsAndOnlyExplicitRetryRepeatsSameEpoch() = runTest(dispatcher) {
+        var epoch = 0
+        var freshCalls = 0
+        val model = CatalogViewModel({ _, _, _, _, _ -> listOf(film("old")) }, dispatcher, SavedStateHandle(), elapsedRealtime,
+            loadFreshPage = { _, _, _, _, _ -> if (++freshCalls == 1) throw IOException("offline") else listOf(film("new")) },
+            userClearRevision = { epoch })
+        model.load("example.org", CatalogSection.Popular, ""); advanceUntilIdle()
+        epoch++
+        model.load("example.org", CatalogSection.Popular, ""); advanceUntilIdle()
+        assertEquals("old", model.state.value.films.single().id)
+        assertEquals("offline", model.state.value.error)
+        model.load("example.org", CatalogSection.Popular, ""); advanceUntilIdle()
+        assertEquals(1, freshCalls)
+        model.retry(); advanceUntilIdle()
+        assertEquals(2, freshCalls)
+        assertEquals("new", model.state.value.films.single().id)
     }
 }

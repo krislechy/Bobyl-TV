@@ -3,6 +3,7 @@ package com.bobyl.tv.data
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.ConcurrentHashMap
@@ -21,7 +22,7 @@ class EpisodeRelay(
     private val workers = Executors.newFixedThreadPool(3)
     // MX probes several adjacent subtitle extensions concurrently.
     private val slots = Semaphore(32)
-    private val sockets = ConcurrentHashMap.newKeySet<Socket>()
+    private val sockets: MutableSet<Socket> = Collections.newSetFromMap(ConcurrentHashMap<Socket, Boolean>())
     private val resolved = ConcurrentHashMap<String, Pair<Long, String>>()
     private val knownUrls = ConcurrentHashMap<String, String>()
     private val subtitles = ConcurrentHashMap<String, Pair<Long, String?>>()

@@ -23,9 +23,11 @@ internal fun HistoryCleanupSettings(provider: String) {
     if (state.busy) LoadingIndicator(if (state.total > 0) "Удалено ${state.removed} из ${state.total}" else "Подготавливаем очистку…")
     if (state.message.isNotBlank()) Text(state.message, color = CinemaStyle.Muted, fontSize = 14.sp)
     if (expanded) Dialog({ expanded = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        CinemaFocusFrameHost {
         Column(Modifier.widthIn(max = 400.dp).fillMaxWidth().clip(RoundedCornerShape(CinemaStyle.PanelCorner))
-            .background(CinemaStyle.Background).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            .cinemaSurface(focused = false, shape = RoundedCornerShape(CinemaStyle.PanelCorner)).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Очистить «Продолжить»", color = CinemaStyle.Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+            CinemaButtonFocusGroup {
             CinematicButton("Очистить в аккаунте", false, Modifier.fillMaxWidth()) {
                 expanded = false
                 model.clear(provider, HistoryCleanupTarget.Account)
@@ -35,6 +37,8 @@ internal fun HistoryCleanupSettings(provider: String) {
                 model.clear(provider, HistoryCleanupTarget.Device)
             }
             CinematicButton("Назад", false, Modifier.fillMaxWidth()) { expanded = false }
+            }
+        }
         }
     }
 }

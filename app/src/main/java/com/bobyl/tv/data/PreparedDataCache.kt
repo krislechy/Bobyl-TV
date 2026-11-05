@@ -9,7 +9,7 @@ import kotlinx.coroutines.withContext
 import org.jsoup.nodes.Document
 import java.security.MessageDigest
 
-/** Bounded process-local results. Account data never reaches the disk cache. */
+/** Bounded process-local front cache. Only whitelisted DTOs can reach the persistent cache. */
 internal object PreparedDataCache {
     private const val MaximumEntries = 64
     private const val MaximumWeight = 4 * 1024 * 1024L
@@ -86,7 +86,10 @@ internal suspend fun <T : Any> PageTransport.prepared(
             .joinToString("") { "%02x".format(it) }
         "$operation|$url|$digest|${PageCache.generation()}"
     }
-    return PreparedDataCache.load(identity, minOf(durationMillis, PageCache.durationMillis()), force, loader)
+    val duration = minOf(durationMillis, PageCache.durationMillis())
+    return PreparedDataCache.load(identity, duration, force) {
+        PersistentCache.load(url, operation, duration, force, loader)
+    }
 }
 
 private data class PreparedPage(val html: String, val url: String, val cacheable: Boolean)

@@ -3,7 +3,7 @@ package com.bobyl.tv.data
 import android.os.SystemClock
 import org.jsoup.nodes.Document
 
-/** Process-local, bounded cache. Never persists account pages or cookies to disk. */
+/** Process-local HTML front cache. Persistent storage contains whitelisted DTOs, never raw pages. */
 internal object PageCache {
     private data class Entry(val html: String, val baseUrl: String, val created: Long)
     private val entries = LinkedHashMap<String, Entry>(16, .75f, true)

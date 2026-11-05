@@ -22,11 +22,14 @@ internal data class FilmHistoryState(
     val loading: Boolean = true, val saving: Boolean = false,
 )
 
-internal class FilmHistoryViewModel(application: Application) : AndroidViewModel(application) {
+internal class FilmHistoryViewModel(application: Application, private val actions: FilmActionsViewModel,
+    private val actionKey: FilmActionKey) : AndroidViewModel(application) {
     private val mutableState = MutableStateFlow(FilmHistoryState())
     val state = mutableState.asStateFlow()
     private var loading: Job? = null
     private var serverRows: List<ContinueItem> = emptyList()
+    private var loaded = false
+    private var appliedSequence = 0L
 
     private fun formatDate(timestamp: Long): String = if (timestamp <= 0L) "" else
         SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.forLanguageTag("ru")).apply {
@@ -36,25 +39,42 @@ internal class FilmHistoryViewModel(application: Application) : AndroidViewModel
     fun load(provider: String, url: String) {
         if (mutableState.value.saving) return
         loading?.cancel()
-        serverRows = emptyList()
         mutableState.value = mutableState.value.copy(loading = true)
         loading = viewModelScope.launch {
+            actions.awaitSettled(actionKey)
             val key = historyFilmKey(url)
             val local = withContext(Dispatchers.IO) {
-                WatchHistory(getApplication(), provider).all().firstOrNull { historyFilmKey(it.url) == key }
+                WatchHistory(getApplication(), provider).forFilm(key).firstOrNull()
             }
             val fallback = FilmHistoryState(inContinue = local != null, watched = local?.watched == true, loading = false,
                 season = local?.season.orEmpty().takeIf { it.toIntOrNull()?.let { number -> number > 0 } == true }.orEmpty(),
                 episode = local?.episode.orEmpty().takeIf { it.toIntOrNull()?.let { number -> number > 0 } == true }.orEmpty(),
                 viewedAt = formatDate(local?.updated ?: 0L))
             try {
-                serverRows = ExtrasRepository().history(provider).filter { historyFilmKey(it.film.url) == key }
-                val server = serverRows.firstOrNull()
+                val batch = ServerHistoryChanges.films.value
+                val lastServerClear = batch.clears.lastOrNull { it.session == actionKey.session && !it.device }
+                val patch = batch.films.lastOrNull { it.session == actionKey.session && it.key == key &&
+                    it.sequence > (lastServerClear?.sequence ?: 0L) }
+                val clear = batch.clears.lastOrNull { it.session == actionKey.session && !it.device && it.sequence > appliedSequence }
+                if (clear != null && clear.completed && (patch?.sequence ?: 0L) <= clear.sequence) serverRows = emptyList()
+                else if (patch?.server != null && (clear == null || patch.sequence > clear.sequence)) serverRows = patch.server
+                else if (!loaded || clear != null) serverRows = AccountSessionGuard.shared.read(actionKey.session) {
+                    ExtrasRepository().history(provider, force = clear?.completed == false).filter { historyFilmKey(it.film.url) == key }
+                }
+                patch?.watched?.let { watched -> serverRows = serverRows.map { it.copy(watched = watched) } }
+                loaded = true
+                appliedSequence = batch.sequence
+                val server = serverRows.maxByOrNull { it.viewedTimestamp ?: 0L }
+                val serverNewer = (server?.viewedTimestamp ?: 0L) > (local?.updated ?: 0L)
                 mutableState.value = fallback.copy(inContinue = server != null || fallback.inContinue,
-                    season = fallback.season.ifBlank { server?.season.orEmpty() },
-                    episode = fallback.episode.ifBlank { server?.episode.orEmpty() },
-                    viewedAt = server?.viewedAt.orEmpty().ifBlank { fallback.viewedAt },
-                    watched = if (serverRows.isNotEmpty()) serverRows.any { it.watched } else fallback.watched)
+                    season = if (serverNewer) server?.season.orEmpty().ifBlank { fallback.season }
+                        else fallback.season.ifBlank { server?.season.orEmpty() },
+                    episode = if (serverNewer) server?.episode.orEmpty().ifBlank { fallback.episode }
+                        else fallback.episode.ifBlank { server?.episode.orEmpty() },
+                    viewedAt = if (serverNewer) server?.viewedAt.orEmpty().ifBlank { fallback.viewedAt }
+                        else fallback.viewedAt.ifBlank { server?.viewedAt.orEmpty() },
+                    watched = if (serverRows.isNotEmpty()) serverRows.any { it.watched } else fallback.watched,
+                    error = actions.latestError(actionKey))
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 mutableState.value = fallback.copy(error = "Не удалось обновить историю просмотра: ${networkErrorMessage(failure)}")
@@ -66,28 +86,19 @@ internal class FilmHistoryViewModel(application: Application) : AndroidViewModel
         if (mutableState.value.saving || mutableState.value.loading) return
         loading?.cancel()
         val entries = serverRows.toList()
-        mutableState.update { it.copy(saving = true, error = "") }
+        val receipt = actions.watched(actionKey, film, watched, entries)
+        mutableState.update { it.copy(saving = receipt.accepted, error = "") }
         viewModelScope.launch {
-            var savedLocally = false
             try {
-                val local = withContext(Dispatchers.IO) {
-                    WatchHistory(getApplication(), provider).setWatched(film, watched)
-                        .firstOrNull { historyFilmKey(it.url) == historyFilmKey(film.url) }
-                }
-                savedLocally = true
-                mutableState.update { it.copy(inContinue = local != null || entries.isNotEmpty(), watched = watched) }
-                val repository = ExtrasRepository()
-                serverRows = entries.map { repository.setHistoryWatched(provider, it, watched) }
-                if (entries.isEmpty()) mutableState.update { it.copy(error =
-                    "Отметка сохранена на устройстве. В истории аккаунта этого фильма пока нет.") }
+                val saved = receipt.await()
+                serverRows = saved.rows
+                mutableState.update { it.copy(inContinue = saved.local != null || saved.rows.isNotEmpty(),
+                    watched = watched, error = saved.message) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
-                mutableState.update { it.copy(error = if (savedLocally)
-                    "Отметка сохранена на устройстве. Не удалось обновить аккаунт: ${networkErrorMessage(failure)}"
-                    else "Не удалось сохранить отметку: ${networkErrorMessage(failure)}") }
+                mutableState.update { it.copy(error = "Не удалось сохранить отметку: ${networkErrorMessage(failure)}") }
             } finally {
                 mutableState.update { it.copy(saving = false) }
-                if (savedLocally) ServerHistoryChanges.changed()
             }
         }
     }

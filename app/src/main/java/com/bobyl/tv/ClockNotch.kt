@@ -37,13 +37,13 @@ internal fun ClockNotch(modifier: Modifier = Modifier) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 now = Date()
-                delay(1_000L)
+                delay(60_000L - System.currentTimeMillis().mod(60_000L))
             }
         }
     }
-    val shape = RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
-    Row(modifier.width(176.dp).background(CinemaStyle.Rail.copy(alpha = .35f), shape)
-        .padding(vertical = 3.dp),
+    val shape = RoundedCornerShape(bottomStart = CinemaStyle.Corner, bottomEnd = CinemaStyle.Corner)
+    Row(modifier.width(176.dp).background(CinemaStyle.Rail.copy(alpha = .72f), shape)
+        .padding(vertical = 5.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
         Text(timeFormat.format(now), color = CinemaStyle.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium,
             style = androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum"))

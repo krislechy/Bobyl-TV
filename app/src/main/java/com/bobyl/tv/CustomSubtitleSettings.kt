@@ -25,7 +25,7 @@ internal fun CustomSubtitleSettings() {
     fun refresh() {
         access = storage.hasAccess()
         scope.launch {
-            status = try { storage.ensureDirectory(); "Папка готова" }
+            status = try { storage.ensureDirectory(); "" }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (e: Exception) { e.message ?: "Папка недоступна" }
         }
@@ -33,10 +33,10 @@ internal fun CustomSubtitleSettings() {
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh() }
     val settings = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { refresh() }
     LaunchedEffect(Unit) { refresh() }
-    Text("Дополнительные файлы для фильмов", color = CinemaStyle.Text, fontSize = 17.sp, fontWeight = FontWeight.Medium)
-    Text(CustomSubtitles.RELATIVE_PATH, color = Color.LightGray)
-    Text("Поместите субтитры в films/ID/. Форматы: SRT, ASS, SSA, VTT.", color = Color.LightGray, fontSize = 13.sp)
-    Text(status, color = if (access) Color.LightGray else Color(0xFFFFB5B9))
+    Text("Дополнительные субтитры", color = CinemaStyle.Text, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+    Text(CustomSubtitles.RELATIVE_PATH, color = CinemaStyle.Muted)
+    Text("films/ID/ · SRT, ASS, SSA, VTT", color = CinemaStyle.Muted, fontSize = 13.sp)
+    if (status.isNotBlank()) Text(status, color = if (access) CinemaStyle.Muted else CinemaStyle.Error)
     if (!access) CinematicButton("Разрешить доступ к файлам", false) {
         if (Build.VERSION.SDK_INT >= 30) {
             try { settings.launch(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${context.packageName}"))) }
@@ -46,6 +46,6 @@ internal fun CustomSubtitleSettings() {
             }
         } else permission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
     }
-    if (!access) Text("Для чтения папки субтитров Android запросит доступ ко всем файлам.", color = Color.LightGray, fontSize = 13.sp)
+    if (!access) Text("Для чтения папки субтитров Android запросит доступ ко всем файлам.", color = CinemaStyle.Muted, fontSize = 13.sp)
     CinematicButton("Проверить папку", false) { refresh() }
 }

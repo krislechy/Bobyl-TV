@@ -46,6 +46,7 @@ object AuthContract {
  * No plaintext password, cookie values, or request body is logged or backed up.
  */
 class AuthRepository(context: Context, private val transport: HtmlTransport = HtmlTransport()) {
+    private val application = context.applicationContext
     private val directory = context.applicationContext.noBackupFilesDir
     private val keyAlias = "bobyl.session.v1"
     private fun key(): SecretKey {
@@ -70,18 +71,29 @@ class AuthRepository(context: Context, private val transport: HtmlTransport = Ht
         }
         manager.flush()
     }
-    suspend fun restore(provider: String): String? = runInterruptible(Dispatchers.IO) {
+    suspend fun restore(provider: String): String? {
         val origin = CatalogUrls.provider(provider)
-        val saved = file(origin)
-        if (!saved.exists()) return@runInterruptible null
-        val data = saved.readBytes()
-        require(data.size > 28) { "Сохранённая сессия повреждена. Войдите заново." }
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, data.copyOfRange(0, 12)))
-        cipher.updateAAD(origin.toByteArray())
-        val json = JSONObject(String(cipher.doFinal(data.copyOfRange(12, data.size)), Charsets.UTF_8))
-        applyCookies(origin, json.getJSONObject("cookies"))
-        json.getString("username")
+        return AccountSessionGuard.shared.restore(origin, prepare = {
+            runInterruptible(Dispatchers.IO) {
+                val saved = file(origin)
+                if (!saved.exists()) return@runInterruptible null
+                val data = saved.readBytes()
+                require(data.size > 28) { "Сохранённая сессия повреждена. Войдите заново." }
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, data.copyOfRange(0, 12)))
+                cipher.updateAAD(origin.toByteArray())
+                val json = JSONObject(String(cipher.doFinal(data.copyOfRange(12, data.size)), Charsets.UTF_8))
+                json.getString("username") to json.getJSONObject("cookies")
+            }
+        }, unchanged = { restored ->
+            restored == null || run {
+                val current = CookieManager.getInstance().getCookie(origin).orEmpty().split(';').mapNotNull {
+                    val pair = it.trim().split('=', limit = 2)
+                    if (pair.size == 2) pair[0] to pair[1] else null
+                }.toMap()
+                listOf("dle_user_id", "dle_password").all { current[it].orEmpty() == restored.second.optString(it) }
+            }
+        }, commit = { restored -> restored?.let { applyCookies(origin, it.second); it.first } })
     }
     suspend fun login(provider: String, username: String, password: String): String {
         require(username.isNotBlank() && password.isNotEmpty()) { "Введите логин и пароль" }
@@ -104,7 +116,7 @@ class AuthRepository(context: Context, private val transport: HtmlTransport = Ht
         AuthContract.validateResponse("{\"success\":true}", response.cookies())
         return saveSession(origin, username, response.cookies())
     }
-    private suspend fun saveSession(origin: String, username: String, cookies: Map<String, String>): String = runInterruptible(Dispatchers.IO) {
+    private suspend fun saveSession(origin: String, username: String, cookies: Map<String, String>): String = AccountSessionGuard.shared.change(origin) {
             PageCache.clear()
             val values = JSONObject(cookies.filterKeys { it in AuthContract.cookieNames })
             val json = JSONObject().put("username", username.trim()).put("cookies", values)
@@ -128,7 +140,34 @@ class AuthRepository(context: Context, private val transport: HtmlTransport = Ht
         val doc = transport.get(origin + "user/$id/")
         return withContext(Dispatchers.Default) { AccountParser.parse(doc) }
     }
-    suspend fun logout(provider: String) = runInterruptible(Dispatchers.IO) {
+    /** Optional Home decoration; the profile is already available before this bounded read starts. */
+    suspend fun premiumPeriod(provider: String, profile: AccountProfile, refresh: Boolean = false): Int? {
+        if (profile.authenticated != true || !profile.premium) return null
+        val remaining = premiumRemainingDays(profile.premiumInfo) ?: return null
+        val guard = AccountSessionGuard.shared
+        val session = guard.current(provider)
+        return kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+            guard.read(session) {
+                val origin = session.provider
+                val id = runInterruptible(Dispatchers.IO) {
+                    AccountSessionGuard.credentials(CookieManager.getInstance().getCookie(origin).orEmpty()).first()
+                }
+                if (!id.matches(Regex("[0-9]+"))) return@read null
+                val cache = PremiumPeriodCache(
+                    read = { com.bobyl.tv.data.database.AppStorage.database(application).storage().meta(it) },
+                    write = { key, value -> com.bobyl.tv.data.database.AppStorage.database(application).storage()
+                        .putMeta(com.bobyl.tv.data.database.StorageMeta(key, value)) },
+                    fetch = { transport.get(origin + "user/$id/payments_history/") },
+                    current = { guard.current(origin) == session },
+                )
+                val tag = MessageDigest.getInstance("SHA-256").digest(profile.premiumInfo.toByteArray(Charsets.UTF_8))
+                    .joinToString("") { "%02x".format(it) }
+                cache.load(origin, id, remaining, tag, refresh)
+            }
+        }
+    }
+
+    suspend fun logout(provider: String) = AccountSessionGuard.shared.change(provider) {
         PageCache.clear()
         val origin = CatalogUrls.provider(provider)
         val manager = CookieManager.getInstance()

@@ -6,12 +6,20 @@ import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.net.Uri
 import android.os.SystemClock
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private object PlayerCache {
     var packageName = ""
     var loadedAt = 0L
     var players: List<ResolveInfo>? = null
 }
+
+/** PackageManager queries and application-label Binder calls stay off the UI thread. */
+internal suspend fun installedPlayerChoices(context: Context, force: Boolean = false): List<Pair<String, String>> =
+    withContext(Dispatchers.IO) {
+        installedPlayers(context, force).map { it.activityInfo.packageName to it.loadLabel(context.packageManager).toString() }
+    }
 
 internal fun installedPlayers(context: Context, force: Boolean = false): List<ResolveInfo> = synchronized(PlayerCache) {
     PlayerCache.players?.takeIf {

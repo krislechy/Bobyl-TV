@@ -39,8 +39,9 @@ internal fun FilmMoreMenu(expanded: Boolean, onExpandedChange: (Boolean) -> Unit
                 offset = if (sideMenu) IntOffset(menuOffset, 0) else IntOffset(0, menuOffset),
                 onDismissRequest = { onExpandedChange(false) }, properties = PopupProperties(focusable = true)) {
                 val shape = RoundedCornerShape(CinemaStyle.Corner)
-                Column(Modifier.width(224.dp).clip(shape).background(CinemaStyle.Surface)
-                    .border(1.dp, CinemaStyle.Outline, shape).padding(8.dp),
+                CinemaFocusFrameHost {
+                CinemaButtonFocusGroup {
+            Column(Modifier.width(244.dp).cinemaSurface(focused = false, shape = shape).padding(10.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (canDownload) CinematicButton("Скачать", false, Modifier.fillMaxWidth().focusRequester(firstFocus), leadingIcon = FieldGlyph.Download) {
                         onExpandedChange(false)
@@ -55,6 +56,8 @@ internal fun FilmMoreMenu(expanded: Boolean, onExpandedChange: (Boolean) -> Unit
                         onExpandedChange(false)
                         onShare()
                     }
+                }
+                }
                 }
             }
         }

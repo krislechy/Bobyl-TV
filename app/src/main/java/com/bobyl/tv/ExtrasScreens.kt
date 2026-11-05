@@ -5,6 +5,8 @@ import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
@@ -41,13 +43,15 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun CinemaModal(title: String, dismiss: () -> Unit, backOnRight: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     Dialog(dismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        CinemaFocusFrameHost {
         Column(Modifier.fillMaxWidth(.9f).fillMaxHeight(.9f).clip(RoundedCornerShape(CinemaStyle.PanelCorner))
-            .background(CinemaStyle.Background).padding(28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            .cinemaSurface(focused = false, shape = RoundedCornerShape(CinemaStyle.PanelCorner)).padding(28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(title, color = CinemaStyle.Text, fontSize = 30.sp, fontWeight = FontWeight.Bold)
             content()
             Row(Modifier.fillMaxWidth(), horizontalArrangement = if (backOnRight) Arrangement.End else Arrangement.Start) {
                 CinematicButton("Назад", false, onClick = dismiss)
             }
+        }
         }
     }
 }
@@ -55,23 +59,34 @@ internal fun CinemaModal(title: String, dismiss: () -> Unit, backOnRight: Boolea
 @Composable
 internal fun ConfirmAction(text: String, dismiss: () -> Unit, confirm: () -> Unit) {
     Dialog(dismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        CinemaFocusFrameHost {
         Column(Modifier.widthIn(max = 480.dp).fillMaxWidth().clip(RoundedCornerShape(CinemaStyle.PanelCorner))
-            .background(CinemaStyle.Background).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            .cinemaSurface(focused = false, shape = RoundedCornerShape(CinemaStyle.PanelCorner)).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Подтверждение", color = CinemaStyle.Text, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-            Text(text, color = Color.White)
+            Text(text, color = CinemaStyle.Text)
+            CinemaButtonFocusGroup {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)) {
                 CinematicButton("Назад", false, onClick = dismiss)
                 CinematicButton("Подтвердить", true) { dismiss(); confirm() }
             }
+            }
+        }
         }
     }
 }
 
 @Composable
-internal fun HistoryScreen(provider: String, resume: (WatchRecord) -> Unit, onReady: () -> Unit = {}, refreshRevision: Int = 0, open: (CatalogFilm) -> Unit) {
-    val model: HistoryViewModel = androidx.lifecycle.viewmodel.compose.viewModel(key = "history:$provider")
+internal fun HistoryScreen(provider: String, resume: (WatchRecord) -> Unit, onReady: () -> Unit = {}, refreshRevision: Int = 0, sessionRevision: Int = 0,
+    requestedTab: String? = null, onRequestedTabHandled: () -> Unit = {}, open: (CatalogFilm) -> Unit) {
+    val model: HistoryViewModel = androidx.lifecycle.viewmodel.compose.viewModel(key = "history:$provider:$sessionRevision")
     val state by model.state.collectAsState()
-    var tab by rememberSaveable(provider) { mutableStateOf("continue") }
+    var tab by rememberSaveable(provider, sessionRevision) { mutableStateOf("continue") }
+    LaunchedEffect(requestedTab) {
+        if (requestedTab != null) {
+            tab = historyTabForRequest(tab, requestedTab)
+            onRequestedTabHandled()
+        }
+    }
     val showWatched = tab == "watched"
     val showDeleted = tab == "deleted"
     val hasDeleted = state.deleted.any { it.records.isNotEmpty() || it.server.isNotEmpty() }
@@ -80,8 +95,8 @@ internal fun HistoryScreen(provider: String, resume: (WatchRecord) -> Unit, onRe
         if (showDeleted) state.deleted.flatMap { historyEntries(it.records, it.server) }
         else historyEntries(state.records, state.server).filter { it.watched == showWatched }
     }
-    var pendingResume by remember { mutableStateOf<HistoryEntry?>(null) }
-    var ratingFilm by rememberSaveable(provider, stateSaver = CatalogFilmStateSaver) { mutableStateOf<CatalogFilm?>(null) }
+    var pendingResume by remember(provider, sessionRevision) { mutableStateOf<HistoryEntry?>(null) }
+    var ratingFilm by rememberSaveable(provider, sessionRevision, stateSaver = CatalogFilmStateSaver) { mutableStateOf<CatalogFilm?>(null) }
     pendingResume?.let { entry -> entry.position?.let { record ->
         ResumeHistoryPrompt(record, dismiss = { pendingResume = null }, openCard = {
             pendingResume = null
@@ -100,26 +115,34 @@ internal fun HistoryScreen(provider: String, resume: (WatchRecord) -> Unit, onRe
     val listState = rememberLazyListState()
     val prefix = if (showDeleted) "deleted:" else ""
     val rowKeys = entries.map { "${prefix}film:${it.key}" }
-    val controls = listOf("tabs") + rowKeys.flatMap {
+    val controls = listOf("tabs") + (if (error.isNotBlank() && !busy) listOf("error:retry") else emptyList()) + rowKeys.flatMap {
         if (showDeleted) listOf("$it:open", "$it:delete") else listOf("$it:open", "$it:watch", "$it:delete")
     }
     val positions = buildMap {
-        var index = 1 + (if (busy) 1 else 0) + (if (error.isNotBlank()) 1 else 0)
+        var index = 1 + (if (busy) 1 else 0)
+        if (error.isNotBlank()) { put("error", index); index++ }
         entries.forEach { put("${prefix}film:${it.key}", index++) }
     }
     val (focus, focusRegion) = rememberActionListFocus(controls, positions, listState)
-    LaunchedEffect(provider, refreshRevision) { model.refresh(provider) }
-    LazyColumn(focusRegion.fillMaxSize().padding(24.dp), state = listState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    LaunchedEffect(provider, sessionRevision, refreshRevision) { model.load(provider, refreshRevision) }
+    LazyColumn(focusRegion.fillMaxSize().padding(horizontal = CinemaContentHorizontal).cinemaFilmViewport(),
+        contentPadding = PaddingValues(top = CinemaContentTop, bottom = 24.dp),
+        state = listState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item {
             val tabs = listOf("continue" to "Продолжить", "watched" to "Просмотренные") +
                 if (hasDeleted) listOf("deleted" to "Недавно удалённые") else emptyList()
             CatalogTabs(tabs, tab,
-                modifier = focus.target("tabs").focusGroup()) {
+                modifier = Modifier.actionListTarget(focus, "tabs").focusGroup()) {
                 tab = it
             }
         }
         if (busy) item { SkeletonLoading(SkeletonLayout.Rows, rows = if (entries.isEmpty()) 3 else 1, actions = if (showDeleted) 1 else 2) }
-        if (error.isNotBlank()) item { Text(error, color = Color(0xFFFFB5B9)) }
+        if (error.isNotBlank()) item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(error, color = CinemaStyle.Error)
+                CinematicButton("Повторить", true, Modifier.actionListTarget(focus, "error:retry"), enabled = !busy) { model.refresh(provider) }
+            }
+        }
         items(entries, key = { "${prefix}film:${it.key}" }) { entry ->
             HistoryCard(entry.film, entry.info, if (showDeleted) "Восстановить запись" else "Удалить из аккаунта и с устройства",
                 focus, "${prefix}film:${entry.key}", canRemove = !busy, watched = entry.watched,
@@ -147,17 +170,21 @@ internal fun HistoryScreen(provider: String, resume: (WatchRecord) -> Unit, onRe
 @Composable
 private fun ResumeHistoryPrompt(record: WatchRecord, dismiss: () -> Unit, openCard: () -> Unit, resume: () -> Unit) {
     Dialog(dismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        CinemaFocusFrameHost {
         Column(Modifier.widthIn(max = 420.dp).fillMaxWidth().clip(RoundedCornerShape(CinemaStyle.PanelCorner))
-            .background(CinemaStyle.Background).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            .cinemaSurface(focused = false, shape = RoundedCornerShape(CinemaStyle.PanelCorner)).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Продолжить с места остановки?", color = CinemaStyle.Text, fontSize = 23.sp, fontWeight = FontWeight.SemiBold)
             Text(record.title, color = CinemaStyle.Text, fontSize = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text("Сохранено: ${historyPositionLabel(record)}", color = CinemaStyle.Muted, fontSize = 15.sp)
+            CinemaButtonFocusGroup {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val buttonSize = Modifier.fillMaxWidth().height(48.dp)
                 CinematicButton("Продолжить", true, buttonSize, onClick = resume)
                 CinematicButton("Открыть карточку", false, buttonSize, onClick = openCard)
                 CinematicButton("Назад", false, buttonSize, onClick = dismiss)
             }
+            }
+        }
         }
     }
 }
@@ -167,54 +194,61 @@ private fun HistoryCard(film: CatalogFilm, info: String, removeLabel: String, fo
     watched: Boolean = false, watchBusy: Boolean = false, deleteBusy: Boolean = false, restore: Boolean = false, sourceLabel: String = "",
     toggleWatched: (() -> Unit)? = null, open: () -> Unit, remove: (() -> Unit)?) {
     var focused by remember { mutableStateOf(false) }
+    val frameTarget = rememberCinemaFilmFocusTarget(focused)
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     val shape = RoundedCornerShape(CinemaStyle.Corner)
     val grayscale = remember { ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) }) }
-    Row(Modifier.fillMaxWidth().background(if (watched) Color(0xFF242629) else CinemaStyle.Surface, shape).padding(2.dp),
+    Row(Modifier.fillMaxWidth().background(if (watched) CinemaStyle.Rail else CinemaStyle.Surface, shape).padding(2.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(focus.target("$rowKey:open").weight(1f).clip(shape)
-            .background(if (focused) CinemaStyle.Selected else Color.Transparent)
-            .border(if (focused) 3.dp else 0.dp, if (focused) CinemaStyle.Focus else Color.Transparent, shape)
+        Row(Modifier.actionListTarget(focus, "$rowKey:open").weight(1f)
+            .cinemaSurface(focused, pressed = pressed, shape = shape, focusFrameTarget = frameTarget)
             .onFocusChanged { focused = it.isFocused }
-            .clickable(role = Role.Button, onClickLabel = "Открыть ${film.title}", onClick = open).padding(4.dp),
+            .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClickLabel = "Открыть ${film.title}", onClick = open).padding(8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Box(Modifier.size(58.dp, 86.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF252832)), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(58.dp, 86.dp).clip(RoundedCornerShape(8.dp)).background(CinemaStyle.Raised), contentAlignment = Alignment.Center) {
                 if (film.poster.isNotBlank()) AsyncImage(film.poster, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
                     colorFilter = if (watched) grayscale else null)
-                else Text("▶", color = Color.Gray, fontSize = 22.sp)
+                else Text("▶", color = CinemaStyle.Muted, fontSize = 22.sp)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(film.title, color = if (watched) Color(0xFF8E949B) else Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (info.isNotBlank()) Text(info, color = if (watched) Color(0xFF777E86) else CinemaStyle.Muted, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(film.title, color = if (watched) CinemaStyle.Muted else CinemaStyle.Text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (info.isNotBlank()) Text(info, color = if (watched) CinemaStyle.Muted else CinemaStyle.Muted, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (sourceLabel.isNotBlank()) Text(sourceLabel, color = CinemaStyle.Muted, fontSize = 12.sp)
             }
-            Text("›", color = if (focused) Color.White else Color.Gray, fontSize = 28.sp)
+            Text("›", color = if (focused) CinemaStyle.Text else CinemaStyle.Muted, fontSize = 28.sp)
         }
+        CinemaButtonFocusGroup {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         toggleWatched?.let { toggle ->
             FieldAction(FieldGlyph.Eye, if (watched) "Снять отметку просмотра" else "Отметить как просмотренное",
-                enabled = canRemove && !deleteBusy, checked = watched, loading = watchBusy, modifier = focus.target("$rowKey:watch"), onClick = toggle)
+                enabled = canRemove && !deleteBusy, checked = watched, loading = watchBusy, modifier = Modifier.actionListTarget(focus, "$rowKey:watch"), onClick = toggle)
         }
         remove?.let { FieldAction(if (restore) FieldGlyph.Restore else FieldGlyph.Delete, removeLabel, enabled = canRemove && !watchBusy,
-            loading = deleteBusy, modifier = focus.target("$rowKey:delete"), onClick = it) }
+            loading = deleteBusy, modifier = Modifier.actionListTarget(focus, "$rowKey:delete"), onClick = it) }
+        }
+        }
     }
 }
 
 @Composable
-internal fun UpdatesScreen(provider: String, onReady: () -> Unit = {}, onUpdateCount: (Int) -> Unit = {}, refreshRevision: Int = 0, open: (CatalogFilm) -> Unit) {
-    val model: UpdatesViewModel = androidx.lifecycle.viewmodel.compose.viewModel(key = "updates-$provider")
+internal fun UpdatesScreen(provider: String, onReady: () -> Unit = {}, onUpdateCount: (Int) -> Unit = {}, refreshRevision: Int = 0, sessionRevision: Int = 0, open: (CatalogFilm) -> Unit) {
+    val model: UpdatesViewModel = androidx.lifecycle.viewmodel.compose.viewModel(key = "updates-$provider:$sessionRevision")
     val state by model.state.collectAsState()
     val rows = state.rows
-    var onlyTracked by rememberSaveable(provider) { mutableStateOf(true) }
+    var onlyTracked by rememberSaveable(provider, sessionRevision) { mutableStateOf(true) }
     val visibleRows = remember(rows, onlyTracked) { if (onlyTracked) rows.filter { it.tracked } else rows }
     val indexedRows = remember(rows, onlyTracked) { rows.withIndex().filter { !onlyTracked || it.value.tracked } }
     val error = state.error
     val busy = state.busy
     val listState = rememberLazyListState()
-    val controls = listOf("tabs") + indexedRows.flatMap { row ->
+    val controls = listOf("tabs") + (if (error.isNotBlank() && !busy) listOf("error:retry") else emptyList()) + indexedRows.flatMap { row ->
         val key = updateRowKey(row.value)
         listOf("$key:open") + if (row.value.tracked) listOf("$key:delete") else emptyList()
     }
     val positions = buildMap {
-        var index = 1 + (if (busy) 1 else 0) + (if (error.isNotBlank()) 1 else 0)
+        var index = 1 + (if (busy) 1 else 0)
+        if (error.isNotBlank()) { put("error", index); index++ }
         indexedRows.groupBy { it.value.date }.values.forEach { group ->
             index++
             group.forEach { put(updateRowKey(it.value), index++) }
@@ -227,22 +261,26 @@ internal fun UpdatesScreen(provider: String, onReady: () -> Unit = {}, onUpdateC
     LaunchedEffect(busy) {
         if (!busy) currentOnReady()
     }
-    val historyRevision by ServerHistoryChanges.revision.collectAsState()
-    LaunchedEffect(provider, refreshRevision) { model.refresh(provider, historyRevision, force = true) }
-    LaunchedEffect(provider, historyRevision) {
-        model.refresh(provider, historyRevision)
-    }
-    LazyColumn(focusRegion.fillMaxSize().padding(24.dp), state = listState, verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(bottom = 28.dp)) {
+    LaunchedEffect(provider, sessionRevision, refreshRevision) { model.open(provider, refreshRevision) }
+    LazyColumn(focusRegion.fillMaxSize().padding(horizontal = CinemaContentHorizontal).cinemaFilmViewport(), state = listState,
+        verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(top = CinemaContentTop, bottom = 28.dp)) {
         item {
             CatalogTabs(listOf("tracked" to "Отслеживаемые", "all" to "Все"), if (onlyTracked) "tracked" else "all",
-                modifier = focus.target("tabs").focusGroup()) {
+                modifier = Modifier.actionListTarget(focus, "tabs").focusGroup()) {
                 onlyTracked = it == "tracked"
             }
         }
         if (busy) item { SkeletonLoading(SkeletonLayout.Rows, rows = if (state.rows.isEmpty()) 3 else 1, actions = 1) }
-        if (error.isNotBlank()) item { Text(error, color = Color(0xFFFFB5B9)) }
+        if (error.isNotBlank()) item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(error, color = CinemaStyle.Error)
+                CinematicButton("Повторить", true, Modifier.actionListTarget(focus, "error:retry"), enabled = !busy) {
+                    model.retry(provider)
+                }
+            }
+        }
         indexedRows.groupBy { it.value.date }.forEach { (date, updates) ->
-            item(key = "date:$date") { Text(date, color = Color.LightGray, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
+            item(key = "date:$date") { Text(date, color = CinemaStyle.Muted, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
             items(updates, key = { updateRowKey(it.value) }) { indexed ->
                 val row = indexed.value
                 LaunchedEffect(row.film.url, row.film.poster, busy) {
@@ -265,28 +303,30 @@ private fun updateRowKey(row: SeriesUpdate) = "update:${row.date}:${row.film.url
 private fun UpdateCard(update: SeriesUpdate, canRemove: Boolean, removing: Boolean, focus: ActionListFocus, rowKey: String,
     posterLoading: Boolean, posterError: String, open: (CatalogFilm) -> Unit, remove: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    val frameTarget = rememberCinemaFilmFocusTarget(focused)
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     val shape = RoundedCornerShape(CinemaStyle.Corner)
     Row(Modifier.fillMaxWidth().background(CinemaStyle.Surface, shape).padding(2.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-    Row(focus.target("$rowKey:open").weight(1f).clip(shape).background(if (focused) CinemaStyle.Selected else CinemaStyle.Surface)
-        .border(if (focused) 3.dp else 0.dp, if (focused) CinemaStyle.Focus else Color.Transparent, shape)
+    Row(Modifier.actionListTarget(focus, "$rowKey:open").weight(1f).cinemaSurface(focused, pressed = pressed, shape = shape, focusFrameTarget = frameTarget)
         .onFocusChanged { focused = it.isFocused }
-        .clickable(role = Role.Button, onClickLabel = "Открыть ${update.film.title}") { open(update.film) }
-        .padding(4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        Box(Modifier.size(58.dp, 86.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF252832)), contentAlignment = Alignment.Center) {
+        .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClickLabel = "Открыть ${update.film.title}") { open(update.film) }
+        .padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Box(Modifier.size(58.dp, 86.dp).clip(RoundedCornerShape(8.dp)).background(CinemaStyle.Raised), contentAlignment = Alignment.Center) {
             if (update.film.poster.isNotBlank()) AsyncImage(update.film.poster, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             else if (posterLoading) SkeletonShape(Modifier.fillMaxSize())
-            else Text("▶", color = Color.Gray, fontSize = 20.sp)
+            else Text("▶", color = CinemaStyle.Muted, fontSize = 20.sp)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(update.film.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(update.film.title, color = CinemaStyle.Text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (update.info.isNotBlank()) Text(update.info, color = CinemaStyle.Muted, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (posterError.isNotBlank()) Text("Постер недоступен. Обновите раздел, чтобы повторить.", color = CinemaStyle.Muted, fontSize = 12.sp)
         }
         if (update.tracked) Text("★", color = CinemaStyle.Accent, fontSize = 22.sp)
-        Text("›", color = if (focused) Color.White else Color.Gray, fontSize = 28.sp)
+        Text("›", color = if (focused) CinemaStyle.Text else CinemaStyle.Muted, fontSize = 28.sp)
     }
-        if (update.tracked) FieldAction(FieldGlyph.Delete, "Удалить из серверного «Продолжить»", enabled = canRemove, loading = removing, modifier = focus.target("$rowKey:delete"), onClick = remove)
+        if (update.tracked) FieldAction(FieldGlyph.Delete, "Удалить из серверного «Продолжить»", enabled = canRemove, loading = removing, modifier = Modifier.actionListTarget(focus, "$rowKey:delete"), onClick = remove)
     }
 }
 
@@ -303,14 +343,14 @@ internal fun PersonDialog(person: Person, open: (CatalogFilm) -> Unit, dismiss: 
     }
     CinemaModal(person.name, dismiss) {
         val listState = rememberLazyListState()
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().popupScrollIndicator(listState).padding(end = 10.dp), state = listState, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().popupScrollIndicator(listState).padding(end = 10.dp).cinemaFilmViewport(), state = listState, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { AsyncImage(person.photo, person.name, Modifier.height(150.dp), contentScale = ContentScale.Fit) }
             if (info == null && error.isEmpty()) item {
                 SkeletonLoading(SkeletonLayout.Text, rows = 2)
                 Spacer(Modifier.height(18.dp))
                 SkeletonLoading(SkeletonLayout.Posters, rows = 1, columns = 5)
             }
-            if (error.isNotEmpty()) item { Text(error, color = Color.LightGray); CinematicButton("Повторить", true) { retry++ } }
+            if (error.isNotEmpty()) item { Text(error, color = CinemaStyle.Muted); CinematicButton("Повторить", true) { retry++ } }
             info?.let { data ->
                 readableChunks(data.description).forEachIndexed { index, line ->
                     item(key = "person-info:$index") { ReadableLine(line) }
@@ -319,6 +359,7 @@ internal fun PersonDialog(person: Person, open: (CatalogFilm) -> Unit, dismiss: 
                     item(key = "career:$career") { ReadableLine(career, heading = true) }
                     item(key = "filmography:$career") {
                         LazyRow(
+                            modifier = Modifier.cinemaFilmViewport(),
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
                             contentPadding = PaddingValues(8.dp),
                         ) {
@@ -328,7 +369,7 @@ internal fun PersonDialog(person: Person, open: (CatalogFilm) -> Unit, dismiss: 
                         }
                     }
                 }
-                if (data.careers.isEmpty()) item { Text("Сайт не предоставил фильмографию", color = Color.LightGray) }
+                if (data.careers.isEmpty()) item { Text("Сайт не предоставил фильмографию", color = CinemaStyle.Muted) }
             }
         }
     }
@@ -338,10 +379,9 @@ internal fun PersonDialog(person: Person, open: (CatalogFilm) -> Unit, dismiss: 
 private fun ReadableLine(text: String, heading: Boolean = false) {
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
-    Text(text, color = Color.White, fontSize = if (heading) 22.sp else 16.sp,
+    Text(text, color = CinemaStyle.Text, fontSize = if (heading) 22.sp else 16.sp,
         fontWeight = if (heading) FontWeight.SemiBold else FontWeight.Normal,
-        modifier = Modifier.fillMaxWidth().clip(shape).background(if (focused) CinemaStyle.Selected else Color.Transparent)
-            .border(if (focused) 3.dp else 0.dp, if (focused) CinemaStyle.Focus else Color.Transparent, shape)
+        modifier = Modifier.fillMaxWidth().cinemaSurface(focused, shape = shape)
             .onFocusChanged { focused = it.isFocused }.focusable().padding(horizontal = 10.dp, vertical = 8.dp))
 }
 

@@ -61,7 +61,7 @@ internal fun ActionTooltip(label: String, focused: Boolean) {
     Popup(popupPositionProvider = position, properties = PopupProperties(focusable = false,
         dismissOnBackPress = false, dismissOnClickOutside = false)) {
         Text(label, color = CinemaStyle.Text, fontSize = 14.sp,
-            modifier = Modifier.widthIn(max = 280.dp).background(CinemaStyle.Raised, RoundedCornerShape(6.dp))
-                .padding(horizontal = 12.dp, vertical = 7.dp))
+            modifier = Modifier.widthIn(max = 280.dp).cinemaSurface(focused = false, shape = RoundedCornerShape(CinemaStyle.Corner))
+                .padding(horizontal = 14.dp, vertical = 9.dp))
     }
 }

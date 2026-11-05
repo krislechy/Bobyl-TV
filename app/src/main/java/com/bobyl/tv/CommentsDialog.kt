@@ -59,12 +59,12 @@ internal fun CommentsDialog(provider: String, filmId: String, dismiss: () -> Uni
     }
     CinemaModal("Комментарии", dismiss, backOnRight = true) {
         val listState = rememberLazyListState()
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().popupScrollIndicator(listState).padding(end = 10.dp), state = listState, verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(4.dp)) {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().cinemaFilmViewport().popupScrollIndicator(listState).padding(end = 10.dp), state = listState, verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(4.dp)) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     reply?.let { target ->
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Ответ: ${target.author}", color = Color.LightGray, fontSize = 14.sp, maxLines = 1,
+                            Text("Ответ: ${target.author}", color = CinemaStyle.Muted, fontSize = 14.sp, maxLines = 1,
                                 overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                             FieldAction(FieldGlyph.Clear, "Отменить ответ", enabled = !busy) { reply = null }
                         }
@@ -74,31 +74,33 @@ internal fun CommentsDialog(provider: String, filmId: String, dismiss: () -> Uni
                     }
                 }
             }
-            if (notice.isNotBlank()) item { Text(notice, color = Color.White) }
+            if (notice.isNotBlank()) item { Text(notice, color = CinemaStyle.Text) }
             items(rows, key = { it.id }) { comment -> Column(Modifier.padding(start = (comment.depth.coerceIn(0, 3) * 10).dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(comment.author, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                    Text(comment.author, color = CinemaStyle.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    Text(comment.date, color = Color.Gray, fontSize = 12.sp)
+                    Text(comment.date, color = CinemaStyle.Muted, fontSize = 12.sp)
                 }
-                Text(comment.text, color = Color(0xFFE0E0E3), fontSize = 16.sp, lineHeight = 22.sp)
+                Text(comment.text, color = CinemaStyle.Text, fontSize = 16.sp, lineHeight = 22.sp)
+                CinemaButtonFocusGroup {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     FieldAction(FieldGlyph.Reply, "Ответить ${comment.author}", enabled = !busy) { reply = comment }
                     if (!comment.self) FieldAction(FieldGlyph.Like, if (comment.liked) "Убрать лайк" else "Нравится", primary = comment.liked, enabled = !busy) { mutate { repository.like(provider, comment) } }
-                    Text(comment.likes.toString(), color = Color.LightGray, fontSize = 14.sp)
+                    Text(comment.likes.toString(), color = CinemaStyle.Muted, fontSize = 14.sp)
                     if (comment.deleteHash.isNotBlank()) FieldAction(FieldGlyph.Delete, "Удалить комментарий", enabled = !busy) { deleting = comment }
                 }
-                Spacer(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF25262B)))
+                }
+                Spacer(Modifier.fillMaxWidth().height(1.dp).background(CinemaStyle.Outline))
             } }
             if (busy) item { SkeletonLoading(SkeletonLayout.Text, rows = if (rows.isEmpty()) 3 else 1) }
             if (error.isNotBlank()) item { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(error, color = Color(0xFFFFB5B9), modifier = Modifier.weight(1f))
+                Text(error, color = CinemaStyle.Error, modifier = Modifier.weight(1f))
                 FieldAction(FieldGlyph.Refresh, "Повторить загрузку", enabled = !busy) { retry++ }
             } }
             if (!busy && error.isBlank() && more) item { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 FieldAction(FieldGlyph.More, "Ещё комментарии") { page++ }
             } }
-            if (!busy && error.isBlank() && rows.isEmpty()) item { Text("Комментариев пока нет", color = Color.LightGray) }
+            if (!busy && error.isBlank() && rows.isEmpty()) item { Text("Комментариев пока нет", color = CinemaStyle.Muted) }
         }
     }
 }

@@ -1,10 +1,13 @@
 package com.bobyl.tv
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -25,6 +28,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -40,9 +44,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.painterResource
 import androidx.tv.material3.Text
 
-internal enum class FieldGlyph { Search, Clear, Microphone, Reply, Like, Delete, Send, More, MoreVertical, Refresh, Restore, Eye, Star, Play, Comments, Bookmark, Back, Download, Trailer, Share }
+internal enum class FieldGlyph { Search, Clear, Microphone, Reply, Like, Delete, Send, More, MoreVertical, Refresh, Restore, Eye, Star, Play, Comments, Bookmark, Back, Download, Trailer, Share, Notifications, Save }
 internal val LocalCompactFilmActions = staticCompositionLocalOf { false }
 
 /** Shared field surface; action buttons remain separate D-pad and accessibility targets. */
@@ -65,9 +70,8 @@ internal fun Input(
     Row(
         Modifier.fillMaxWidth().heightIn(min = 64.dp)
             .onFocusChanged { focused = it.hasFocus }
-            .background(CinemaStyle.Surface, shape)
-            .border(if (focused) 3.dp else 1.dp, if (focused) CinemaStyle.Focus else CinemaStyle.Outline, shape)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .cinemaSurface(focused = focused, shape = shape)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -92,7 +96,7 @@ internal fun Input(
                         else -> false
                     }
                 },
-            textStyle = TextStyle(color = Color.White, fontSize = 18.sp),
+            textStyle = TextStyle(color = CinemaStyle.Text, fontSize = 18.sp),
             visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
             keyboardOptions = KeyboardOptions(
                 keyboardType = if (password) KeyboardType.Password else KeyboardType.Text,
@@ -108,35 +112,39 @@ internal fun Input(
                 }
             },
         )
-        actions()
+        CinemaButtonFocusGroup { actions() }
     }
 }
 
 @Composable
-internal fun FieldAction(glyph: FieldGlyph, label: String, primary: Boolean = false, enabled: Boolean = true, checked: Boolean = false, loading: Boolean = false, modifier: Modifier = Modifier, tooltip: Boolean = false, onClick: () -> Unit) {
+internal fun FieldAction(glyph: FieldGlyph, label: String, modifier: Modifier = Modifier, primary: Boolean = false, enabled: Boolean = true, checked: Boolean = false, loading: Boolean = false, tooltip: Boolean = false, onClick: () -> Unit) {
     val compact = LocalCompactFilmActions.current && glyph != FieldGlyph.Play
     var focused by remember { mutableStateOf(false) }
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val frameTarget = rememberCinemaButtonFocusTarget(focused && (enabled || loading))
     val shape = RoundedCornerShape(CinemaStyle.Corner)
     Box(
-        modifier.size(if (compact) 40.dp else 48.dp).clip(shape)
-            .background(if (enabled && primary) CinemaStyle.Accent else CinemaStyle.Raised)
-            .border(if (focused) 3.dp else 1.dp, if (focused) CinemaStyle.Focus else CinemaStyle.Outline, shape)
+        modifier.size(if (compact) 40.dp else 48.dp)
+            .cinemaSurface(focused, selected = primary || checked, pressed = pressed, enabled = enabled || loading, shape = shape, focusFrameTarget = frameTarget)
             .onFocusChanged { focused = it.isFocused }
             .semantics { contentDescription = label }
-            .clickable(enabled = enabled || loading, role = Role.Button, onClickLabel = label, onClick = { if (enabled && !loading) onClick() }),
+            .clickable(interactionSource = interaction, indication = null, enabled = enabled || loading, role = Role.Button, onClickLabel = label, onClick = { if (enabled && !loading) onClick() }),
         contentAlignment = Alignment.Center,
     ) {
         if (loading) {
-            val transition = rememberInfiniteTransition(label = "history-action")
-            val angle by transition.animateFloat(0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing)), label = "spinner")
+            val angle = if (cinemaMotionEnabled()) {
+                val transition = rememberInfiniteTransition(label = "history-action")
+                transition.animateFloat(0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing)), label = "spinner")
+            } else remember { mutableFloatStateOf(0f) }
             Canvas(Modifier.size(if (compact) 20.dp else 24.dp)) {
-                drawArc(CinemaStyle.Text, angle, 270f, false, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
+                drawArc(CinemaStyle.Text, angle.value, 270f, false, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
             }
         }
         else if (glyph == FieldGlyph.Eye) WatchStatusIcon(checked, Modifier.size(if (compact) 26.dp else 32.dp), enabled = enabled, action = true)
         else FieldIcon(glyph, if (glyph == FieldGlyph.Bookmark && checked) CinemaStyle.Accent
-            else if (glyph == FieldGlyph.Star && checked) Color(0xFFF4C85E)
-            else if (!enabled) CinemaStyle.Muted else if (primary) CinemaStyle.OnAccent else CinemaStyle.Text,
+            else if (glyph == FieldGlyph.Star && checked) CinemaStyle.Accent
+            else if (!enabled) CinemaStyle.Muted else if (primary || checked) CinemaStyle.Accent else CinemaStyle.Text,
             Modifier.size(if (compact) { if (glyph == FieldGlyph.Star) 24.dp else if (glyph == FieldGlyph.Bookmark) 22.dp else 20.dp }
                 else if (glyph == FieldGlyph.Star) 28.dp else if (glyph == FieldGlyph.Bookmark) 26.dp else 24.dp), filled = checked)
         if (tooltip) ActionTooltip(label, focused)
@@ -145,6 +153,10 @@ internal fun FieldAction(glyph: FieldGlyph, label: String, primary: Boolean = fa
 
 @Composable
 internal fun FieldIcon(glyph: FieldGlyph, color: Color, modifier: Modifier, filled: Boolean = false) {
+    if (glyph == FieldGlyph.Notifications) {
+        Image(painterResource(R.drawable.ic_notifications), null, modifier, colorFilter = ColorFilter.tint(color))
+        return
+    }
     Canvas(modifier) {
         val unit = size.minDimension / 24f
         val stroke = 1.8f * unit
@@ -214,6 +226,7 @@ internal fun FieldIcon(glyph: FieldGlyph, color: Color, modifier: Modifier, fill
                 line(4f, 4f, 4f, 10f); line(4f, 10f, 10f, 10f)
             }
             FieldGlyph.Eye -> Unit // Rendered as the shared SVG-derived WatchStatusIcon above.
+            FieldGlyph.Notifications -> Unit // The shared vector is rendered above.
             FieldGlyph.Star -> {
                 val path = androidx.compose.ui.graphics.Path().apply {
                     moveTo(12f * unit, 2f * unit)
@@ -257,6 +270,16 @@ internal fun FieldIcon(glyph: FieldGlyph, color: Color, modifier: Modifier, fill
             FieldGlyph.Refresh -> {
                 drawArc(color, 35f, 290f, false, point(4f, 4f), Size(16f * unit, 16f * unit), style = Stroke(stroke, cap = StrokeCap.Round))
                 line(20f, 3f, 20f, 9f); line(20f, 9f, 14f, 9f)
+            }
+            FieldGlyph.Save -> {
+                val outline = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(3f * unit, 3f * unit); lineTo(17f * unit, 3f * unit)
+                    lineTo(21f * unit, 7f * unit); lineTo(21f * unit, 21f * unit)
+                    lineTo(3f * unit, 21f * unit); close()
+                }
+                drawPath(outline, color, style = Stroke(stroke, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+                line(7f, 3f, 7f, 9f); line(7f, 9f, 16f, 9f); line(16f, 9f, 16f, 3f)
+                line(7f, 21f, 7f, 14f); line(7f, 14f, 17f, 14f); line(17f, 14f, 17f, 21f)
             }
             FieldGlyph.Search -> {
                 drawCircle(color, 7f * unit, point(10f, 10f), style = Stroke(stroke))

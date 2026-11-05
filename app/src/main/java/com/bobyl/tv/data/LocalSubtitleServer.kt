@@ -3,6 +3,7 @@ package com.bobyl.tv.data
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -22,7 +23,7 @@ class LocalSubtitleServer(files: List<Pair<String, ByteArray>>) : AutoCloseable 
     val urls = paths.map { "http://127.0.0.1:${server.localPort}$it" }
     private val workers = Executors.newFixedThreadPool(2)
     private val slots = Semaphore(16)
-    private val sockets = ConcurrentHashMap.newKeySet<Socket>()
+    private val sockets: MutableSet<Socket> = Collections.newSetFromMap(ConcurrentHashMap<Socket, Boolean>())
     init {
         Thread({
             while (!server.isClosed) {

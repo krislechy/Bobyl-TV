@@ -17,7 +17,13 @@ import org.w3c.dom.Element
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.devtools.ksp")
+    id("androidx.room")
 }
+
+// BuildDev defaults to optimized Dev on TV; emulator uses it only with -Performance.
+// Both modes keep the same Dev package, signing key and app data.
+val devPerformance = providers.gradleProperty("bobyl.devPerformance").map { it.toBoolean() }.getOrElse(false)
 
 abstract class BuildDateSource : ValueSource<String, ValueSourceParameters.None> {
     override fun obtain(): String = ZonedDateTime.now(ZoneId.of("Europe/Moscow"))
@@ -73,8 +79,8 @@ android {
         applicationId = "com.bobyl.tv"
         minSdk = 23
         targetSdk = 35
-        versionCode = 59
-        versionName = "2.3.11"
+        versionCode = 60
+        versionName = "3.0.0"
         buildConfigField("String", "BUILD_DATE", "\"${providers.of(BuildDateSource::class.java) {}.get()}\"")
         testInstrumentationRunner = "com.bobyl.tv.ParityInstrumentation"
     }
@@ -84,6 +90,12 @@ android {
             applicationIdSuffix = ".dev"
             versionNameSuffix = "-debug"
             manifestPlaceholders["appLabel"] = "Бобыль Dev"
+            if (devPerformance) {
+                isDebuggable = false
+                isMinifyEnabled = true
+                isShrinkResources = true
+                proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            }
         }
         release {
             isMinifyEnabled = true
@@ -126,10 +138,24 @@ android {
         buildConfig = true
     }
 
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.jvmArgs("--add-opens=java.base/java.lang=ALL-UNNAMED",
+                "--add-opens=java.base/java.util=ALL-UNNAMED", "--add-opens=java.base/java.io=ALL-UNNAMED",
+                "--add-opens=java.base/java.net=ALL-UNNAMED", "--add-opens=java.base/java.security=ALL-UNNAMED",
+                "--add-opens=java.base/java.text=ALL-UNNAMED", "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
+                "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED",
+                "--add-opens=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED")
+        }
+    }
+
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
 }
+
+room { schemaDirectory("$projectDir/schemas") }
 
 androidComponents {
     onVariants(selector().all()) { variant ->
@@ -155,9 +181,13 @@ dependencies {
     implementation("org.jsoup:jsoup:1.23.2")
     implementation("io.coil-kt.coil3:coil-compose:3.6.1")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.1")
+    implementation("androidx.room:room-runtime:2.8.5")
+    ksp("androidx.room:room-compiler:2.8.5")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("org.json:json:20240303")
+    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("androidx.room:room-testing:2.8.5")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

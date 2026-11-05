@@ -5,6 +5,8 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.net.URI
 import kotlin.io.encoding.Base64
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class MediaTrack(val label: String, val url: String)
 data class StreamChoices(val streams: List<MediaTrack>, val subtitles: List<MediaTrack>)
@@ -129,16 +131,24 @@ object PlaybackRequests {
 }
 
 class PlaybackRepository(private val transport: PageTransport = HtmlTransport()) {
-    private suspend fun request(provider: String, form: Map<String, String>): JSONObject = PlaybackParser.response(
-        transport.post(CatalogUrls.provider(provider) + "ajax/get_cdn_series/?t=${System.currentTimeMillis()}", form))
+    private suspend fun <T> request(provider: String, form: Map<String, String>, parse: (JSONObject) -> T): T {
+        val document = transport.post(CatalogUrls.provider(provider) + "ajax/get_cdn_series/?t=${System.currentTimeMillis()}", form)
+        return withContext(Dispatchers.Default) { parse(PlaybackParser.response(document)) }
+    }
 
-    suspend fun movie(provider: String, info: PlaybackInfo, voice: VoiceOption): StreamChoices =
-        info.initial?.takeIf { it.streams.isNotEmpty() } ?: PlaybackParser.choices(request(provider, PlaybackRequests.movie(info, voice)))
+    suspend fun movie(provider: String, info: PlaybackInfo, voice: VoiceOption): StreamChoices {
+        info.initial?.takeIf { it.streams.isNotEmpty() }?.let { return it }
+        return request(provider, PlaybackRequests.movie(info, voice), PlaybackParser::choices)
+    }
 
-    suspend fun seasons(provider: String, info: PlaybackInfo, voice: VoiceOption): Map<String, List<String>> =
-        PlaybackParser.seasons(Jsoup.parse(request(provider, PlaybackRequests.seasons(info, voice)).optString("episodes")))
-            .also { check(it.isNotEmpty()) { "Для этой озвучки пока нет доступных серий" } }
+    suspend fun seasons(provider: String, info: PlaybackInfo, voice: VoiceOption): Map<String, List<String>> {
+        return request(provider, PlaybackRequests.seasons(info, voice)) { response ->
+            PlaybackParser.seasons(Jsoup.parse(response.optString("episodes")))
+                .also { check(it.isNotEmpty()) { "Для этой озвучки пока нет доступных серий" } }
+        }
+    }
 
-    suspend fun episode(provider: String, info: PlaybackInfo, voice: VoiceOption, season: String, episode: String) =
-        PlaybackParser.choices(request(provider, PlaybackRequests.episode(info, voice, season, episode)))
+    suspend fun episode(provider: String, info: PlaybackInfo, voice: VoiceOption, season: String, episode: String): StreamChoices {
+        return request(provider, PlaybackRequests.episode(info, voice, season, episode), PlaybackParser::choices)
+    }
 }

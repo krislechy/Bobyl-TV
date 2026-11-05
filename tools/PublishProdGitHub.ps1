@@ -43,6 +43,44 @@ try {
     $apkName = "bobyl-tv-production-$tag.apk"
     $apkPath = Join-Path $outputDirectory $apkName
     Copy-Item -LiteralPath (Join-Path $apkDirectory $element.outputFile) -Destination $apkPath
+    $stage = 'Validate APK'
+    $buildToolsDirectory = Join-Path $toolsRoot 'android-dev\sdk\build-tools'
+    $buildTools = Get-ChildItem -LiteralPath $buildToolsDirectory -Directory |
+        Where-Object { (Test-Path -LiteralPath (Join-Path $_.FullName 'aapt.exe') -PathType Leaf) -and
+            (Test-Path -LiteralPath (Join-Path $_.FullName 'apksigner.bat') -PathType Leaf) } |
+        Sort-Object { [version]($_.Name -replace '-.*$', '') } -Descending |
+        Select-Object -First 1
+    if (!$buildTools) { throw 'Android APK validation tools are required before publication' }
+    $ErrorActionPreference = 'Continue'
+    $apkBadging = @(& (Join-Path $buildTools.FullName 'aapt.exe') dump badging $apkPath 2>&1)
+    $badgingExit = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($badgingExit -ne 0) { throw 'Production APK manifest validation failed' }
+    $packageLine = @($apkBadging | Where-Object { "$_" -match '^package:' })
+    if ($packageLine.Count -ne 1) { throw 'Expected one production package declaration' }
+    $packageMatch = [regex]::Match("$($packageLine[0])",
+        "^package: name='([^']+)' versionCode='([0-9]+)' versionName='([^']+)'")
+    if (!$packageMatch.Success -or $packageMatch.Groups[1].Value -cne 'com.bobyl.tv' -or
+        [long]$packageMatch.Groups[2].Value -ne [long]$element.versionCode -or
+        $packageMatch.Groups[3].Value -cne $element.versionName -or
+        @($apkBadging | Where-Object { "$_" -match '^application-debuggable(?:\s|$)' }).Count) {
+        throw 'Production APK package, version or non-debuggable requirement failed'
+    }
+    $ErrorActionPreference = 'Continue'
+    $apkSignatures = @(& (Join-Path $buildTools.FullName 'apksigner.bat') verify --print-certs $apkPath 2>&1)
+    $signatureExit = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($signatureExit -ne 0) { throw 'Production APK signature verification failed' }
+    $signerDigests = @($apkSignatures | ForEach-Object {
+        $digestMatch = [regex]::Match("$_", '^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]{64})$')
+        if ($digestMatch.Success) { $digestMatch.Groups[1].Value.ToLowerInvariant() }
+    })
+    $expectedCertificate = '6c1be0e85a78335b98228d4339d0b3df228ce529d5b99a7062f9cf9109b2b02a'
+    if ($signerDigests.Count -ne 1 -or $signerDigests[0] -cne $expectedCertificate) {
+        throw 'Production APK certificate does not match the existing release certificate'
+    }
+    Write-Output "Verified production APK: com.bobyl.tv $($element.versionName) ($($element.versionCode)), non-debuggable, certificate $expectedCertificate"
+    $stage = 'Package'
     $manifestPath = Join-Path $outputDirectory 'bobyl-tv-update.json'
     $manifest = [ordered]@{ packageName = 'com.bobyl.tv'; versionCode = [long]$element.versionCode;
         versionName = $element.versionName; apk = $apkName;

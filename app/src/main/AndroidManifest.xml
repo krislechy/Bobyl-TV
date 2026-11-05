@@ -44,6 +44,7 @@
     </queries>
 
     <application
+        android:name=".BobylApplication"
         android:allowBackup="true"
         android:requestLegacyExternalStorage="true"
         android:fullBackupContent="@xml/backup_rules"

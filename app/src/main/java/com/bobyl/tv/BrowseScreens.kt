@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.items
@@ -40,35 +42,40 @@ internal val contentTypes = listOf("0" to "Всё", "1" to "Фильмы", "2" t
 
 @Composable
 internal fun ChoiceRow(options: List<Pair<String, String>>, selected: String, choose: (String) -> Unit) {
-    LazyRow(contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    CinemaButtonFocusGroup {
+    LazyRow(Modifier.cinemaFilmViewport(), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         items(options, key = { it.first }) { (id, title) -> CinematicButton(title, id == selected) { choose(id) } }
+    }
     }
 }
 
 @Composable
-internal fun CatalogTabs(options: List<Pair<String, String>>, selected: String, separateAll: Boolean = false, modifier: Modifier = Modifier, choose: (String) -> Unit) {
+internal fun CatalogTabs(options: List<Pair<String, String>>, selected: String, modifier: Modifier = Modifier, separateAll: Boolean = false, choose: (String) -> Unit) {
     val shape = RoundedCornerShape(CinemaStyle.Corner)
-    Box(modifier.fillMaxWidth().clip(shape).background(CinemaStyle.Rail).border(1.dp, CinemaStyle.Outline, shape)) {
+    CinemaButtonFocusGroup {
+    Box(modifier.fillMaxWidth().clip(shape).background(CinemaStyle.Rail)) {
         if (!separateAll) ChoiceRow(options, selected, choose)
-        else LazyRow(contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        else LazyRow(Modifier.cinemaFilmViewport(), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             options.forEachIndexed { index, (id, title) ->
                 item(key = id) { CinematicButton(title, id == selected) { choose(id) } }
                 if (index == 0) item(key = "all-divider") { Spacer(Modifier.width(1.dp).height(28.dp).background(CinemaStyle.Outline)) }
             }
         }
     }
+    }
 }
 
 @Composable
 internal fun PagedFilms(title: String, token: String, columns: Int, open: (CatalogFilm) -> Unit,
-    header: @Composable () -> Unit = {}, onReady: () -> Unit = {}, refreshRevision: Int = 0, load: suspend (Int) -> List<CatalogFilm>) {
-    var films by remember(token) { mutableStateOf<List<CatalogFilm>>(emptyList()) }
-    var page by rememberSaveable(token) { mutableIntStateOf(1) }
-    var retry by remember { mutableIntStateOf(0) }
-    var busy by remember(token) { mutableStateOf(true) }
-    var more by remember(token) { mutableStateOf(true) }
-    var error by remember(token) { mutableStateOf<String?>(null) }
-    var loadedRevision by remember(token) { mutableIntStateOf(refreshRevision) }
+    header: @Composable () -> Unit = {}, onReady: () -> Unit = {}, refreshRevision: Int = 0,
+    requestSession: AccountSession? = null, load: suspend (Int, Boolean) -> List<CatalogFilm>) {
+    val model: PagedFilmsViewModel = androidx.lifecycle.viewmodel.compose.viewModel(key = "paged-films:$title", factory = PagedFilmsViewModel.Factory)
+    val snapshot by model.state.collectAsState()
+    val state = snapshot.takeIf { it.token == token } ?: PagedFilmsState()
+    val films = state.films
+    val busy = state.busy
+    val error = state.error
+    val more = state.more
     var pendingFocus by rememberSaveable(token) { mutableStateOf("") }
     var waitForWindowLoss by remember(token) { mutableStateOf(false) }
     val windowFocused = androidx.compose.ui.platform.LocalWindowInfo.current.isWindowFocused
@@ -77,6 +84,7 @@ internal fun PagedFilms(title: String, token: String, columns: Int, open: (Catal
         if (!windowFocused) waitForWindowLoss = false
     }
     val currentLoad by rememberUpdatedState(load)
+    val latestState by rememberUpdatedState(state)
     val currentOnReady by rememberUpdatedState(onReady)
     LaunchedEffect(busy) {
         if (!busy) currentOnReady()
@@ -84,58 +92,42 @@ internal fun PagedFilms(title: String, token: String, columns: Int, open: (Catal
     val rows = remember(films, columns) { films.chunked(columns) }
     val listState = key(token) { rememberLazyListState() }
     val rowCount by rememberUpdatedState(rows.size)
-    LaunchedEffect(token, page, retry, refreshRevision) {
-        busy = true; error = null
-        try {
-            val reloadAll = loadedRevision != refreshRevision || (films.isEmpty() && page > 1)
-            var lastPageHasRows = false
-            val next = if (reloadAll) buildList {
-                for (number in 1..page) {
-                    val rows = currentLoad(number)
-                    lastPageHasRows = rows.isNotEmpty()
-                    addAll(rows)
-                }
-            } else currentLoad(page)
-            val combined = (if (reloadAll || page == 1) next else films + next).distinctBy { it.url }
-            more = if (reloadAll) lastPageHasRows else next.isNotEmpty() && (page == 1 || combined.size > films.size)
-            films = combined
-            loadedRevision = refreshRevision
-        } catch (cancelled: CancellationException) { throw cancelled }
-        catch (failure: Exception) { error = networkErrorMessage(failure) }
-        finally { busy = false }
+    LaunchedEffect(token, refreshRevision, requestSession, state.busy, state.dirty) {
+        val requestLoad = currentLoad
+        model.open(token, refreshRevision, current = {
+            requestSession == null || AccountSessionGuard.shared.current(requestSession.provider) == requestSession
+        }) { number, force -> requestLoad(number, force) }
     }
     LaunchedEffect(token, listState) {
         snapshotFlow {
             val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
             // Header is item 0; request the next page when the penultimate row is visible.
-            !busy && error == null && more && rowCount > 0 &&
+            !latestState.busy && latestState.error == null && latestState.more && rowCount > 0 &&
                 lastVisible >= maxOf(1, rowCount - 1)
         }.collect { shouldLoad ->
             if (shouldLoad) {
-                // Close the gate before scheduling composition, including manual clicks.
-                busy = true
-                page++
+                model.more()
             }
         }
     }
-    BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 24.dp)) {
+    BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = CinemaContentHorizontal)) {
         val width = ((maxWidth - 16.dp - 14.dp * (columns - 1)) / columns).coerceAtLeast(44.dp)
         // Keep the saved scroll position until all previously loaded pages are ready.
         // Measuring an empty list here would clamp it to the first item, even on Retry.
-        if (page > 1 && films.isEmpty() && (busy || error != null)) {
-            Column(Modifier.padding(vertical = 28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        if (state.restoring && films.isEmpty() && (busy || error != null)) {
+            Column(Modifier.padding(top = CinemaContentTop, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                 header()
                 if (busy) SkeletonLoading(SkeletonLayout.Posters, rows = 2, columns = columns)
                 error?.let {
-                    Text(it, color = Color(0xFFFFB5B9))
+                    Text(it, color = CinemaStyle.Error)
                     CinematicButton("Повторить", true) {
-                        if (!busy) { busy = true; retry++ }
+                        model.retry()
                     }
                 }
             }
             return@BoxWithConstraints
         }
-        LazyColumn(state = listState, contentPadding = PaddingValues(vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        LazyColumn(Modifier.cinemaFilmViewport(), state = listState, contentPadding = PaddingValues(top = CinemaContentTop, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             item {
                 header()
             }
@@ -159,13 +151,13 @@ internal fun PagedFilms(title: String, token: String, columns: Int, open: (Catal
                 }
             }
             if (busy) item { SkeletonLoading(SkeletonLayout.Posters, rows = if (films.isEmpty()) 2 else 1, columns = columns) }
-            error?.let { item { Text(it, color = Color(0xFFFFB5B9)); CinematicButton("Повторить", true) {
-                if (!busy) { busy = true; retry++ }
+            error?.let { item { Text(it, color = CinemaStyle.Error); CinematicButton("Повторить", true) {
+                model.retry()
             } } }
             if (!busy && error == null) item {
-                if (films.isEmpty()) Text("Ничего не найдено", color = Color.LightGray)
+                if (films.isEmpty()) Text("Ничего не найдено", color = CinemaStyle.Muted)
                 else if (more) CinematicButton("Загрузить ещё", false) {
-                    if (!busy && error == null && more) { busy = true; page++ }
+                    model.more()
                 }
             }
         }
@@ -173,34 +165,41 @@ internal fun PagedFilms(title: String, token: String, columns: Int, open: (Catal
 }
 
 @Composable
-internal fun CategoriesScreen(provider: String, columns: Int, onReady: () -> Unit = {}, refreshRevision: Int = 0, open: (CatalogFilm) -> Unit) {
+internal fun CategoriesScreen(provider: String, columns: Int, onReady: () -> Unit = {}, refreshRevision: Int = 0, sessionRevision: Int = 0, open: (CatalogFilm) -> Unit) {
     val repository = remember { BrowseRepository() }
-    var filters by remember(provider) { mutableStateOf<BrowseFilters?>(null) }
-    var categoryUrl by rememberSaveable(provider) { mutableStateOf("") }
-    var genre by rememberSaveable(provider) { mutableStateOf("") }
-    var year by rememberSaveable(provider) { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
-    var retry by remember { mutableIntStateOf(0) }
-    LaunchedEffect(provider, retry, refreshRevision) {
-        error = null
-        try { filters = repository.filters(provider, force = retry > 0 || refreshRevision > 0); if (categoryUrl.isBlank()) categoryUrl = filters?.categories?.firstOrNull()?.url.orEmpty() }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (failure: Exception) { error = networkErrorMessage(failure) }
+    val model: CategoriesViewModel = androidx.lifecycle.viewmodel.compose.viewModel(key = "categories-screen")
+    val snapshot by model.state.collectAsState()
+    val session = AccountSessionGuard.shared.current(provider)
+    val state = snapshot.takeIf { it.session == session } ?: CategoriesState(session = session)
+    val filters = state.filters
+    val error = state.error
+    var categoryUrl by rememberSaveable(provider, sessionRevision) { mutableStateOf("") }
+    var genre by rememberSaveable(provider, sessionRevision) { mutableStateOf("") }
+    var year by rememberSaveable(provider, sessionRevision) { mutableStateOf("") }
+    LaunchedEffect(provider, sessionRevision, refreshRevision, state.busy) { model.open(provider, refreshRevision) }
+    LaunchedEffect(filters) {
+        filters?.let { options ->
+            if (options.categories.none { it.url == categoryUrl }) categoryUrl = options.categories.firstOrNull()?.url.orEmpty()
+            if (options.categories.firstOrNull { it.url == categoryUrl }?.genres?.none { it.url == genre } == true) genre = ""
+            if (year !in options.years) year = ""
+        }
     }
     val category = filters?.categories?.firstOrNull { it.url == categoryUrl }
     val currentOnReady by rememberUpdatedState(onReady)
     LaunchedEffect(category, filters, error) {
         if (category == null && (filters != null || error != null)) currentOnReady()
     }
-    if (category == null) Column(Modifier.padding(28.dp)) {
+    if (category == null) Column(Modifier.padding(start = CinemaContentHorizontal, end = CinemaContentHorizontal, top = CinemaContentTop)) {
         if (error == null && filters == null) {
             SkeletonLoading(SkeletonLayout.Filters)
             Spacer(Modifier.height(18.dp))
             SkeletonLoading(SkeletonLayout.Posters, rows = 2, columns = columns)
         }
-        else { Text(error ?: "Сайт не предоставил категории", color = Color.White); CinematicButton("Повторить", true) { retry++ } }
-    } else PagedFilms("Категории", "$provider|$categoryUrl|$genre|$year", columns, open, onReady = onReady, refreshRevision = refreshRevision, header = {
+        else { Text(error ?: "Сайт не предоставил категории", color = CinemaStyle.Text); CinematicButton("Повторить", true) { model.retry(provider) } }
+    } else PagedFilms("Категории", "$provider|$sessionRevision|$categoryUrl|$genre|$year", columns, open, onReady = onReady,
+        refreshRevision = state.contentRevision, requestSession = session, header = {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            if (error != null) { Text(error, color = CinemaStyle.Error); CinematicButton("Повторить", true) { model.retry(provider) } }
             CatalogTabs(filters!!.categories.map { it.url to it.title }, categoryUrl) { categoryUrl = it; genre = "" }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                 Box(Modifier.weight(1f)) {
@@ -211,7 +210,7 @@ internal fun CategoriesScreen(provider: String, columns: Int, onReady: () -> Uni
                 }
             }
         }
-    }) { page -> repository.films(category, genre, year, page) }
+    }) { page, force -> repository.films(category, genre, year, page, force) }
 }
 
 @Composable
@@ -270,7 +269,7 @@ internal fun SearchInput(value: String, suggestions: SearchSuggestionsState, cha
                 else { speechRequest++; if (!permissionGranted) permission.launch(Manifest.permission.RECORD_AUDIO) }
             }
         }
-        if (message.isNotBlank()) Text(message, color = Color.LightGray)
+        if (message.isNotBlank()) Text(message, color = CinemaStyle.Muted)
         if (suggestions.loading || suggestions.unavailable || suggestions.films.isNotEmpty()) {
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(CinemaStyle.PanelCorner))
                 .background(CinemaStyle.Rail).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -294,14 +293,16 @@ internal fun SearchInput(value: String, suggestions: SearchSuggestionsState, cha
 @Composable
 private fun SearchSuggestionCard(film: CatalogFilm, modifier: Modifier = Modifier, open: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    val frameTarget = rememberCinemaFilmFocusTarget(focused)
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     val shape = RoundedCornerShape(CinemaStyle.Corner)
     val year = remember(film.metadata) {
         Regex("(?<!\\d)(?:18|19|20|21)\\d{2}(?:\\s*[–—-]\\s*(?:18|19|20|21)\\d{2})?(?!\\d)")
             .find(film.metadata)?.value.orEmpty()
     }
-    Row(modifier.clip(shape).background(if (focused) CinemaStyle.Selected else CinemaStyle.Surface)
-        .border(if (focused) 3.dp else 1.dp, if (focused) CinemaStyle.Focus else Color.Transparent, shape)
-        .onFocusChanged { focused = it.isFocused }.clickable(onClick = open).padding(10.dp),
+    Row(modifier.cinemaSurface(focused, pressed = pressed, shape = shape, focusFrameTarget = frameTarget)
+        .onFocusChanged { focused = it.isFocused }.clickable(interactionSource = interaction, indication = null, onClick = open).padding(12.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.width(46.dp).height(69.dp).clip(RoundedCornerShape(4.dp)).background(CinemaStyle.Raised),
             contentAlignment = Alignment.Center) {

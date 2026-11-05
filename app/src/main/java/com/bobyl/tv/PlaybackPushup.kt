@@ -42,7 +42,7 @@ internal fun PlaybackPushup(panel: PushupPanel, filmTitle: String, selections: M
             }
         }
     }
-    val motionEnabled = remember { Build.VERSION.SDK_INT < 26 || ValueAnimator.areAnimatorsEnabled() }
+    val motionEnabled = cinemaMotionEnabled()
     val motion = tween<Float>(if (motionEnabled) 220 else 0, easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f))
     val density = LocalDensity.current
     BoxWithConstraints(Modifier.fillMaxWidth(.96f).fillMaxHeight(.96f)) {
@@ -54,11 +54,10 @@ internal fun PlaybackPushup(panel: PushupPanel, filmTitle: String, selections: M
             val previewHeight = if (upcoming.options.isEmpty()) 56.dp else 80.dp
             val previewOffset = with(density) { (cardHeight / 2 + previewHeight / 2 + 12.dp).toPx() }
             Column(Modifier.align(Alignment.Center).width(cardWidth * .9f).height(previewHeight)
-                .graphicsLayer { translationY = previewOffset; alpha = .8f }
-                .clip(RoundedCornerShape(CinemaStyle.PanelCorner)).background(CinemaStyle.Surface)
-                .border(1.dp, CinemaStyle.Outline, RoundedCornerShape(CinemaStyle.PanelCorner)).padding(horizontal = 16.dp, vertical = 12.dp),
+                .graphicsLayer { translationY = previewOffset }
+                .cinemaSurface(focused = false, shape = RoundedCornerShape(CinemaStyle.PanelCorner)).padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Далее · ${upcoming.title}", color = CinemaStyle.Text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text("Далее · ${upcoming.title}", color = CinemaStyle.Muted, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 if (upcoming.options.isNotEmpty()) Text(upcoming.options.take(4).joinToString(" · ") { it.first }, color = CinemaStyle.Muted, fontSize = 13.sp, maxLines = 1)
             }
         }
@@ -70,24 +69,22 @@ internal fun PlaybackPushup(panel: PushupPanel, filmTitle: String, selections: M
                 val depth = cards.lastIndex - cards.indexOf(card)
                 val scale by animateFloatAsState(if (!entered) .96f else 1f - depth * .07f, motion, label = "pushup-scale")
                 val offset by animateFloatAsState(if (!entered) retreat * .3f else -depth * retreat, motion, label = "pushup-position")
-                val opacity by animateFloatAsState(if (!entered) 0f else if (depth == 0) 1f else (.9f - depth * .05f).coerceAtLeast(.7f), motion, label = "pushup-dim")
+                val opacity by animateFloatAsState(if (!entered) 0f else 1f, motion, label = "pushup-entrance")
                 Column(Modifier.align(Alignment.Center).width(cardWidth).height(cardHeight)
                     .zIndex(card.step.toFloat())
                     .graphicsLayer { translationY = offset; scaleX = scale; scaleY = scale; alpha = opacity }
-                    .clip(RoundedCornerShape(CinemaStyle.PanelCorner))
-                    .background(CinemaStyle.Background)
-                    .border(1.dp, CinemaStyle.Outline, RoundedCornerShape(CinemaStyle.PanelCorner))
+                    .cinemaSurface(focused = false, selected = depth == 0, shape = RoundedCornerShape(CinemaStyle.PanelCorner))
                     .padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (card.step == panel.step) content()
                     else {
-                        Text(card.title, color = CinemaStyle.Text, fontSize = 24.sp)
+                        Text(card.title, color = CinemaStyle.Muted, fontSize = 24.sp)
                         Text(filmTitle, color = CinemaStyle.Muted, fontSize = 15.sp, maxLines = 2)
                         LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             itemsIndexed(card.options) { _, option ->
                                 Box(Modifier.fillMaxWidth().background(
                                     if (option.second) CinemaStyle.Selected else CinemaStyle.Surface,
                                     RoundedCornerShape(CinemaStyle.Corner)).padding(horizontal = 20.dp, vertical = 12.dp)) {
-                                    Text(option.first, color = if (option.second) CinemaStyle.Accent else CinemaStyle.Text,
+                                    Text(option.first, color = if (option.second) CinemaStyle.Accent else CinemaStyle.Muted,
                                         fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
                                 }
                             }

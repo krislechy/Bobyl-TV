@@ -9,6 +9,8 @@ import org.jsoup.Jsoup
 import org.jsoup.Connection
 import org.jsoup.nodes.Document
 import java.io.IOException
+import com.bobyl.tv.data.database.FilmMetadataStore
+import kotlinx.coroutines.CancellationException
 
 interface PageTransport {
     suspend fun get(url: String, details: Boolean = false): Document
@@ -29,7 +31,7 @@ class HtmlTransport : PageTransport {
     }
 
     private suspend fun readCachedPage(url: String): Document = runInterruptible(Dispatchers.IO) {
-        val cookies = CookieManager.getInstance().getCookie(url).orEmpty()
+        val (session, cookies) = AccountSessionGuard.shared.requestCookies(url) { CookieManager.getInstance().getCookie(url).orEmpty() }
         val digest = java.security.MessageDigest.getInstance("SHA-256")
             .digest(cookies.toByteArray()).joinToString("") { "%02x".format(it) }
         val key = "$url|$digest"
@@ -38,7 +40,7 @@ class HtmlTransport : PageTransport {
         val request = connection(url)
         if (cookies.isNotBlank()) request.header("Cookie", cookies)
         val response = request.execute()
-        saveResponseCookies(response)
+        saveResponseCookies(response, session)
         val doc = ResponseDocument.parse(response.body(), response.url().toString())
         // Do not cache challenge pages, unexpected responses or redirects to login.
         if (response.statusCode() == 200 && response.url().toString() == url &&
@@ -54,16 +56,17 @@ class HtmlTransport : PageTransport {
         .timeout(20_000).maxBodySize(8 * 1024 * 1024).ignoreContentType(true)
 
     suspend fun postResponse(url: String, form: Map<String, String>, login: Boolean = false): Connection.Response = runInterruptible(Dispatchers.IO) {
+        val (requestSession, sessionCookies) = AccountSessionGuard.shared.requestCookies(url) { CookieManager.getInstance().getCookie(url).orEmpty() }
         val request = connection(url).data(form).method(Connection.Method.POST).followRedirects(!login)
         if (!login) {
-            val session = CookieManager.getInstance().getCookie(url).orEmpty()
+            val session = sessionCookies
             val header = if (form["action"] in listOf("get_movie", "get_stream") || url.contains("add_comment") || url.contains("schedule_watched"))
                 "$session; allowed_comments=1; _ym_isad=1; _ym_visorc=b; dle_newpm=0;" else session
             if (header.isNotBlank()) request.header("Cookie", header)
         }
         val response = request.execute()
         // Login cookies are committed by AuthRepository only after success=true.
-        if (!login) saveResponseCookies(response)
+        if (!login) saveResponseCookies(response, requestSession)
         response
     }
 
@@ -72,47 +75,74 @@ class HtmlTransport : PageTransport {
         return runInterruptible(Dispatchers.IO) { ResponseDocument.parse(response.body(), response.url().toString()) }
     }
 
-    private fun saveResponseCookies(response: Connection.Response) {
+    private fun saveResponseCookies(response: Connection.Response, session: AccountCookieRequest) {
+        val uri = java.net.URI(response.url().toString())
+        if (CatalogUrls.provider("${uri.scheme}://${uri.rawAuthority}") != session.session.provider) return
+        AccountSessionGuard.shared.commitResponse(session) {
         val cookies = CookieManager.getInstance()
         response.multiHeaders().filterKeys { it.equals("Set-Cookie", ignoreCase = true) }
             .values.flatten().forEach { cookies.setCookie(response.url().toString(), it) }
         cookies.flush()
+        }
     }
 
     override suspend fun get(url: String, details: Boolean): Document = runInterruptible(Dispatchers.IO) {
         val cookies = CookieManager.getInstance()
         val connection = connection(url)
-        val sessionCookies = cookies.getCookie(url).orEmpty()
+        val (session, sessionCookies) = AccountSessionGuard.shared.requestCookies(url) { cookies.getCookie(url).orEmpty() }
         val cookieHeader = if (details) {
             "$sessionCookies; allowed_comments=1; _ym_isad=1; _ym_visorc=b; dle_newpm=0;"
         } else sessionCookies
         if (cookieHeader.isNotBlank()) connection.header("Cookie", cookieHeader)
         val response = connection.execute()
-        saveResponseCookies(response)
+        saveResponseCookies(response, session)
         ResponseDocument.parse(response.body(), response.url().toString())
+    }
+}
+
+private fun metadataOrigin(value: String): String {
+    val uri = java.net.URI(if (value.contains("://")) value else "https://$value")
+    return CatalogUrls.provider("${uri.scheme}://${uri.rawAuthority}")
+}
+
+internal suspend fun PageTransport.rememberFilms(providerOrUrl: String, films: List<CatalogFilm>) =
+    rememberMetadata { it.rememberFilms(metadataOrigin(providerOrUrl), films) }
+
+private suspend fun PageTransport.rememberMetadata(action: suspend (FilmMetadataStore) -> Unit) {
+    if (this !is HtmlTransport) return
+    val store = FilmMetadataStore.currentOrNull() ?: return
+    try { action(store) }
+    catch (cancelled: CancellationException) { throw cancelled }
+    catch (failure: Exception) {
+        android.util.Log.w("BobylStorage", "Film metadata update deferred: ${failure.javaClass.simpleName}")
     }
 }
 
 class CatalogRepository(private val transport: PageTransport = HtmlTransport()) {
     suspend fun details(url: String): FilmDetails {
         val document = transport.get(url, details = true)
-        return withContext(Dispatchers.Default) { DetailsParser.parse(document) }
+        val result = withContext(Dispatchers.Default) { DetailsParser.parse(document) }
+        transport.rememberMetadata { it.rememberDetails(metadataOrigin(url), result) }
+        return result
     }
 
-    suspend fun load(provider: String, section: CatalogSection, page: Int, query: String, kind: String = section.genre): List<CatalogFilm> {
+    suspend fun load(provider: String, section: CatalogSection, page: Int, query: String, kind: String = section.genre, force: Boolean = false): List<CatalogFilm> {
         val url = CatalogUrls.page(provider, section, page, query, kind)
-        return transport.prepared(url, "catalog:${section.name}:$kind", PageCache.durationMillis()) {
-            loadPage(provider, section, page, query, kind)
+        val result = transport.prepared(url, "catalog:${section.name}:$kind", PageCache.durationMillis(), force) {
+            loadPage(provider, section, page, query, kind, force)
         }
+        transport.rememberFilms(provider, result)
+        return result
     }
 
-    private suspend fun loadPage(provider: String, section: CatalogSection, page: Int, query: String, kind: String): List<CatalogFilm> {
+    private suspend fun loadPage(provider: String, section: CatalogSection, page: Int, query: String, kind: String, force: Boolean): List<CatalogFilm> {
         if (section == CatalogSection.Slider && query.isBlank()) {
             if (page != 1) return emptyList()
             val doc = transport.post(CatalogUrls.provider(provider) + "engine/ajax/get_newest_slider_content.php", mapOf("id" to kind))
             return withContext(Dispatchers.Default) { CatalogParser.parse(doc) }
         }
-        val document = transport.cachedGet(CatalogUrls.page(provider, section, page, query, kind))
+        val url = CatalogUrls.page(provider, section, page, query, kind)
+        val document = if (force) transport.get(url) else transport.cachedGet(url)
         return withContext(Dispatchers.Default) {
             val films = CatalogParser.parse(document)
             if (films.isEmpty() && document.select(".b-content__inline_items, .b-content__search_wrapper, .b-content__search_results").isEmpty()) {

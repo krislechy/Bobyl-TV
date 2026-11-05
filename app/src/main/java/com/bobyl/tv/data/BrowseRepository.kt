@@ -40,12 +40,17 @@ object BrowseParser {
 }
 
 class BrowseRepository(private val transport: PageTransport = HtmlTransport()) {
-    suspend fun filmsAt(url: String, page: Int): List<CatalogFilm> {
+    suspend fun filmsAt(url: String, page: Int, force: Boolean = false): List<CatalogFilm> {
         require(PlaybackParser.isMediaUrl(url) && page > 0)
         val uri = URI(url)
         val target = if (page == 1) url else URI(uri.scheme, uri.authority,
             uri.path.replace(Regex("/page/\\d+/?$"), "").trimEnd('/') + "/page/$page/", uri.query, null).toString()
-        return CatalogParser.parse(transport.cachedGet(target))
+        val result = transport.prepared(target, "browse-films", PageCache.durationMillis(), force) {
+            val document = if (force) transport.get(target) else transport.cachedGet(target)
+            withContext(Dispatchers.Default) { CatalogParser.parse(document) }
+        }
+        transport.rememberFilms(target, result)
+        return result
     }
     suspend fun filters(provider: String, force: Boolean = false): BrowseFilters {
         val url = CatalogUrls.provider(provider)
@@ -54,18 +59,27 @@ class BrowseRepository(private val transport: PageTransport = HtmlTransport()) {
             withContext(Dispatchers.Default) { BrowseParser.filters(document) }
         }
     }
-    suspend fun films(category: BrowseCategory, genre: String, year: String, page: Int) =
-        CatalogParser.parse(transport.cachedGet(BrowseParser.categoryUrl(category, genre, year, page)))
-    suspend fun suggestions(provider: String, query: String) = BrowseParser.suggestions(
-        transport.post(CatalogUrls.provider(provider) + "engine/ajax/search.php", mapOf("q" to query.trim())))
+    suspend fun films(category: BrowseCategory, genre: String, year: String, page: Int, force: Boolean = false): List<CatalogFilm> {
+        val url = BrowseParser.categoryUrl(category, genre, year, page)
+        val result = transport.prepared(url, "browse-films", PageCache.durationMillis(), force) {
+            val document = if (force) transport.get(url) else transport.cachedGet(url)
+            withContext(Dispatchers.Default) { CatalogParser.parse(document) }
+        }
+        transport.rememberFilms(url, result)
+        return result
+    }
+    suspend fun suggestions(provider: String, query: String): List<CatalogFilm> {
+        val document = transport.post(CatalogUrls.provider(provider) + "engine/ajax/search.php", mapOf("q" to query.trim()))
+        return withContext(Dispatchers.Default) { BrowseParser.suggestions(document) }
+    }
 
     suspend fun quickSearch(provider: String, query: String): List<CatalogFilm> {
         val suggestions = suggestions(provider, query)
         if (suggestions.none { it.poster.isBlank() }) return suggestions
         // Fill missing thumbnails with one cached search page, rather than loading every film's details.
         val matches = try {
-            CatalogParser.parse(transport.cachedGet(CatalogUrls.page(provider, CatalogSection.Latest, 1, query)))
-                .associateBy { it.url }
+            val document = transport.cachedGet(CatalogUrls.page(provider, CatalogSection.Latest, 1, query))
+            withContext(Dispatchers.Default) { CatalogParser.parse(document).associateBy { it.url } }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {

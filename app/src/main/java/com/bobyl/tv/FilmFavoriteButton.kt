@@ -28,7 +28,9 @@ import com.bobyl.tv.data.BookmarkCategory
 @Composable
 internal fun FilmFavoriteButton(provider: String, filmId: String, url: String, categories: List<BookmarkCategory>,
     triggerFocus: FocusRequester, onOpen: () -> Unit, onUpdated: (List<BookmarkCategory>) -> Unit) {
-    val model: FilmBookmarksViewModel = viewModel(key = "film-bookmarks:$provider:$filmId")
+    val actions = LocalFilmActions.current
+    val actionKey = currentFilmActionKey(provider, filmId.ifBlank { url })
+    val model: FilmBookmarksViewModel = viewModel(key = "film-bookmarks:${actionKey.film}") { FilmBookmarksViewModel(actions, actionKey) }
     val state by model.state.collectAsState()
     var expanded by remember { mutableStateOf(false) }
     val currentOnUpdated by rememberUpdatedState(onUpdated)
@@ -41,6 +43,7 @@ internal fun FilmFavoriteButton(provider: String, filmId: String, url: String, c
         val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex)
         val firstFocus = remember { FocusRequester() }
         LaunchedEffect(Unit) { withFrameNanos { }; firstFocus.requestFocus() }
+        CinemaFocusFrameHost {
         Column(Modifier.widthIn(max = 304.dp).fillMaxWidth().clip(RoundedCornerShape(CinemaStyle.PanelCorner))
             .background(CinemaStyle.Background).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -48,8 +51,9 @@ internal fun FilmFavoriteButton(provider: String, filmId: String, url: String, c
                 if (state.saving) LoadingIndicator("")
             }
             if (state.categories.isEmpty()) Text("Нет доступных списков. Выполните вход в настройках.", color = CinemaStyle.Muted, fontSize = 15.sp)
-            else LazyColumn(Modifier.height((state.categories.size * 48 + 8).coerceAtMost(232).dp)
-                .fillMaxWidth().popupScrollIndicator(listState).padding(end = 10.dp), state = listState,
+            else CinemaButtonFocusGroup {
+            LazyColumn(Modifier.height((state.categories.size * 48 + 8).coerceAtMost(232).dp)
+                .fillMaxWidth().cinemaFilmViewport().popupScrollIndicator(listState).padding(end = 10.dp), state = listState,
                 verticalArrangement = Arrangement.spacedBy(4.dp), contentPadding = PaddingValues(4.dp)) {
                 items(state.categories, key = { it.id }) { category ->
                     val itemModifier = if (category.id == state.categories.getOrNull(selectedIndex)?.id)
@@ -65,10 +69,12 @@ internal fun FilmFavoriteButton(provider: String, filmId: String, url: String, c
                     }
                 }
             }
+            }
             if (state.error.isNotBlank()) Text(state.error, color = Color(0xFFFFB5B9), fontSize = 14.sp)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 CinematicButton("Назад", false, if (state.categories.isEmpty()) Modifier.focusRequester(firstFocus) else Modifier) { expanded = false }
             }
+        }
         }
     }
 }

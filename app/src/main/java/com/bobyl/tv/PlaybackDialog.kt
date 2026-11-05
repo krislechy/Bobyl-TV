@@ -43,6 +43,9 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("${context.packageName}_preferences", Context.MODE_PRIVATE) }
     val history = remember(provider) { WatchHistory(context, provider) }
+    val selections = remember { PlaybackSelections(context) }
+    val actions = LocalFilmActions.current
+    val actionKey = currentFilmActionKey(provider, filmUrl.ifBlank { info.id })
     val scope = rememberCoroutineScope()
     val repository = remember { PlaybackRepository() }
     val prefetch = remember(repository, scope) { EpisodePrefetch(repository, scope) }
@@ -64,6 +67,14 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
     var manualQuality by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var lastSelection by remember(info.id) { mutableStateOf(PlaybackSelection()) }
+    LaunchedEffect(info.id, actionKey) {
+        try {
+            actions.awaitPlaybackSelection(info.id)
+            lastSelection = selections.read(info.id)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { error = networkErrorMessage(failure) }
+    }
     var retry by remember { mutableIntStateOf(0) }
     var notice by remember { mutableStateOf("") }
     var autoAdvance by remember { mutableStateOf(false) }
@@ -71,9 +82,12 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
     var lastSubtitle by rememberSaveable { mutableStateOf("") }
     var launchPending by remember { mutableStateOf(false) }
     var resumePending by rememberSaveable { mutableStateOf(resumeRecord != null) }
+    var resumeRecordConsumed by rememberSaveable { mutableStateOf(false) }
     var pendingRecord by rememberSaveable(stateSaver = WatchRecordStateSaver) { mutableStateOf<WatchRecord?>(null) }
+    var pendingLaunchId by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingSessionToken by rememberSaveable { mutableStateOf<String?>(null) }
     var relayPlayback by rememberSaveable { mutableStateOf(false) }
-    var directPlaybackUrl by remember { mutableStateOf<String?>(null) }
+    var directPlaybackUrl by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(step) {
         if (step != PlaybackStep.Episode && step != PlaybackStep.Quality) prefetch.stop()
     }
@@ -88,8 +102,12 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
         // Never assign a different episode's position to the originally selected episode.
         val record = if (wasRelay) returnedEpisode?.let { pendingRecord?.copy(episode = it) } else pendingRecord
         if (relayPlayback || localSubtitlePlayback) {
+            val completedRelay = EpisodeRelayService.relay
+            val completedSubtitles = EpisodeRelayService.subtitleServer
+            EpisodeRelayService.relay = null
+            EpisodeRelayService.subtitleServer = null
             context.stopService(Intent(context, EpisodeRelayService::class.java))
-            EpisodeRelayService.closeSession()
+            actions.release(AutoCloseable { try { completedRelay?.close() } finally { completedSubtitles?.close() } })
             relayPlayback = false
             localSubtitlePlayback = false
         }
@@ -97,16 +115,24 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
         val complete = data?.getStringExtra("end_by") == "playback_completion"
         if (result.resultCode == android.app.Activity.RESULT_OK && record != null && (position >= 0 || complete)) {
             val returnedDecoder = data?.getByteExtra("decode_mode", record.decoder.toByte())?.toInt() ?: record.decoder
-            if (complete && info.isMovie) history.put(record.copy(positionMs = 0L, watched = true,
-                updated = System.currentTimeMillis(), decoder = returnedDecoder))
-            else if (complete) history.remove(record.filmId)
-            else history.put(record.copy(positionMs = position.toLong(), updated = System.currentTimeMillis(), decoder = returnedDecoder))
-            if (position >= 0) scope.launch {
-                try { ExtrasRepository().saveProgress(provider, record.filmId, record.voice, record.season, record.episode, position / 1000L) }
-                catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { notice = "Позиция сохранена на устройстве. Серверная синхронизация недоступна." }
+            val confirmed = record.copy(positionMs = if (complete && info.isMovie) 0L else position.toLong(),
+                watched = if (complete && info.isMovie) true else record.watched,
+                updated = System.currentTimeMillis(), decoder = returnedDecoder)
+            val callbackKey = FilmActionKey.of(AccountSession(actionKey.session.provider,
+                pendingSessionToken ?: "unconfirmed-session"), record.filmId)
+            val receipt = actions.saveProgress(PlaybackProgressSnapshot(pendingLaunchId ?: java.util.UUID.randomUUID().toString(),
+                callbackKey, confirmed, complete, info.isMovie, position.toLong()))
+            if (receipt.accepted) {
+                pendingRecord = null
+                pendingLaunchId = null
+                pendingSessionToken = null
             }
-            if (complete && !wasRelay && !info.isMovie && prefs.getBoolean("autoNext", false)) {
+            scope.launch {
+                try { receipt.await().message.takeIf { it.isNotBlank() }?.let { notice = it } }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) { error = "Не удалось сохранить позицию: ${networkErrorMessage(failure)}" }
+            }
+            if (receipt.accepted && complete && !wasRelay && !info.isMovie && prefs.getBoolean("autoNext", false)) {
                 val all = seasons.flatMap { (s, episodes) -> episodes.map { s to it } }
                 val index = all.indexOf(record.season to record.episode)
                 val next = if (index >= 0) all.getOrNull(index + 1) else null
@@ -141,18 +167,25 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
         error = null
         launchPending = true
         scope.launch {
+            val ownership = PlaybackLaunchOwnership()
+            var preparedResources = false
             try {
                 val downloads = MediaDownloads(context)
                 if (download) {
-                    if (prefs.getBoolean("externalDownload", false)) downloads.external(chosen) else downloads.enqueue(chosen, title)
-                    if (subtitle != null) downloads.enqueue(subtitle, "$title ${subtitle.label}", subtitle = true)
+                    if (prefs.getBoolean("externalDownload", false)) downloads.external(chosen)
+                    else downloads.enqueue(chosen, title, filmId = info.id, provider = provider)
+                    if (subtitle != null) downloads.enqueue(subtitle, "$title ${subtitle.label}", subtitle = true,
+                        filmId = info.id, provider = provider)
                     notice = "Загрузка передана выбранному загрузчику"
                 } else {
                     val localSub = if (subtitle != null && prefs.getBoolean("localSubtitles", true)) downloads.subtitle(subtitle) else null
                     // Position belongs to the film/episode, independently of stream URL and quality.
-                    val saved = resumeRecord ?: kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        history.find(info.id)?.takeUnless { it.watched }
-                    }
+                    // The incoming history snapshot is only valid for the first launch.
+                    actions.awaitSettled(actionKey)
+                    val saved = resumeRecord?.takeUnless { resumeRecordConsumed }
+                        ?: kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            history.find(info.id)?.takeUnless { it.watched }
+                        }
                     val matched = saved?.takeIf { info.isMovie || (it.season == season && it.episode == episode) }
                     val resume = matched?.positionMs ?: 0L
                     val chosenPlayer = matched?.playerPackage?.takeIf { it.isNotBlank() } ?: playerPackage
@@ -160,6 +193,8 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
                         ?: prefs.getInt("mxDecoder", 0).takeIf { it in listOf(1, 2, 4) } ?: 0
                     pendingRecord = WatchRecord(info.id, filmUrl, title, poster, voice?.id.orEmpty(), season, episode, resume,
                         quality = chosen.label, subtitle = subtitle?.label.orEmpty(), playerPackage = chosenPlayer, decoder = decoder)
+                    pendingLaunchId = java.util.UUID.randomUUID().toString()
+                    pendingSessionToken = actionKey.session.token
                     // Commit history only when the player returns a confirmed position or completion.
                     // Preparing an intent (or cancelling its chooser) must preserve existing progress.
                     var customSubtitles = if (info.isMovie) {
@@ -172,7 +207,7 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
                     } else emptyList()
                     if (BuildConfig.DEBUG && customSubtitles.isNotEmpty()) {
                         val files = customSubtitles
-                        val localServer = kotlinx.coroutines.runInterruptible(kotlinx.coroutines.Dispatchers.IO) {
+                        val localServer = acquirePlaybackResource(interruptible = true, create = {
                             check(files.size <= 32) { "В папке слишком много субтитров (максимум 32)" }
                             var total = 0L
                             val snapshots = files.map { track ->
@@ -191,10 +226,12 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
                                 track.name to bytes
                             }
                             LocalSubtitleServer(snapshots)
-                        }
-                        EpisodeRelayService.closeSession()
-                        EpisodeRelayService.subtitleServer = localServer
-                        localSubtitlePlayback = true
+                        }, adopt = { server ->
+                            EpisodeRelayService.closeSession()
+                            EpisodeRelayService.subtitleServer = server
+                            localSubtitlePlayback = true
+                            preparedResources = true
+                        })
                         androidx.core.content.ContextCompat.startForegroundService(context, Intent(context, EpisodeRelayService::class.java))
                         customSubtitles = files.mapIndexed { index, track -> track.copy(uri = Uri.parse(localServer.urls[index])) }
                     }
@@ -218,7 +255,7 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
                                     repository.episode(provider, info, selectedVoice, selectedSeason, number)
                                 }.also { sourceCache[number] = System.currentTimeMillis() to it }
                         }
-                        val relay = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        val relay = acquirePlaybackResource(create = {
                             EpisodeRelay(episodeIds, resolveSubtitle = { number ->
                                 if (selectedSubtitle == null) null else sources(number).subtitles
                                     .firstOrNull { it.label == selectedSubtitle }?.url
@@ -227,26 +264,40 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
                                     tracks.firstOrNull { it.label == chosen.label }?.url
                                         ?: error("Выбранное качество недоступно")
                             }
-                        }
-                        EpisodeRelayService.relay = relay
-                        relayPlayback = true
+                        }, adopt = { created ->
+                            EpisodeRelayService.relay = created
+                            relayPlayback = true
+                            preparedResources = true
+                        })
                         prefs.edit().putInt("episodeRelayLastPort", relay.port).apply()
                         androidx.core.content.ContextCompat.startForegroundService(context, Intent(context, EpisodeRelayService::class.java))
                         applyEpisodePlaylist(intent, relay, selectedSeason, episode, title, subtitle)
                     }
-                    playerLauncher.launch(intent)
+                    ownership.launch { playerLauncher.launch(intent) }
+                    resumeRecordConsumed = true
                     lastQuality = chosen.label; lastSubtitle = subtitle?.label.orEmpty()
-                    prefs.edit().putString("lastVoice:${info.id}", voice?.id).putString("lastSeason:${info.id}", season)
-                        .putString("lastEpisode:${info.id}", episode).apply()
+                    val selected = PlaybackSelection(voice?.id.orEmpty(), season, episode)
+                    val receipt = actions.savePlaybackSelection(actionKey, info.id, selected)
+                    if (receipt.accepted) {
+                        lastSelection = selected
+                        scope.launch {
+                            try { receipt.await() }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (failure: Exception) { notice = "Не удалось сохранить последний выбор: ${networkErrorMessage(failure)}" }
+                        }
+                    }
+                    else notice = "Воспроизведение запущено. Не удалось сохранить последний выбор."
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: ActivityNotFoundException) { error = "Выбранный плеер или загрузчик не установлен. Измените выбор в настройках." }
             catch (failure: Exception) { error = networkErrorMessage(failure) }
             finally {
-                if ((relayPlayback || localSubtitlePlayback) && error != null) {
-                    context.stopService(Intent(context, EpisodeRelayService::class.java))
-                    EpisodeRelayService.closeSession(); relayPlayback = false
-                    localSubtitlePlayback = false
+                ownership.cleanupBeforeTransfer {
+                    if (preparedResources && (relayPlayback || localSubtitlePlayback)) {
+                        context.stopService(Intent(context, EpisodeRelayService::class.java))
+                        EpisodeRelayService.closeSession(); relayPlayback = false
+                        localSubtitlePlayback = false
+                    }
                 }
                 launchPending = false
             }
@@ -322,6 +373,7 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
         }
     }
     Dialog(::back, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        CinemaFocusFrameHost {
         val stepTitle = when (step) {
                 PlaybackStep.Voice -> "Озвучка и язык"
                 PlaybackStep.Season -> "Выберите сезон"
@@ -351,31 +403,33 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
             PlaybackStep.Episode.ordinal to "Серия $episode",
             PlaybackStep.Quality.ordinal to stream?.label.orEmpty(),
         ), nextPanel) {
-            Text(stepTitle, color = Color.White, fontSize = 24.sp)
+            Text(stepTitle, color = CinemaStyle.Text, fontSize = 24.sp)
             Text(title, color = CinemaStyle.Muted, fontSize = 15.sp, maxLines = 2)
             if (launchPending) LoadingIndicator(if (download) "Начинаем загрузку…" else "Подготавливаем плеер…")
-            if (notice.isNotBlank()) Text(notice, color = Color.LightGray)
+            if (notice.isNotBlank()) Text(notice, color = CinemaStyle.Muted)
             val listShape = RoundedCornerShape(16.dp)
             Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp)
                 .clip(listShape).background(CinemaStyle.Surface)) {
-            LazyColumn(state = optionListState, modifier = Modifier.fillMaxSize().popupScrollIndicator(optionListState).padding(horizontal = 10.dp),
+            key(step) {
+            CinemaButtonFocusGroup {
+            LazyColumn(state = optionListState, modifier = Modifier.fillMaxSize().cinemaFilmViewport().popupScrollIndicator(optionListState).padding(horizontal = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 10.dp)) {
                 if (busy) item { SkeletonLoading(SkeletonLayout.Options, rows = 4) }
                 if (!busy) {
                     when (step) {
                         PlaybackStep.Voice -> itemsIndexed(info.voices) { index, option ->
-                            CinematicButton(option.title + (if (option.premium) " • Premium" else "") + (if (option.id == prefs.getString("lastVoice:${info.id}", "")) " • последняя" else ""), voice?.id == option.id,
+                            CinematicButton(option.title + (if (option.premium) " • Premium" else "") + (if (option.id == lastSelection.voice) " • последняя" else ""), voice?.id == option.id,
                                 if (index == 0) Modifier.focusRequester(firstOptionFocus) else Modifier) {
                                 voice = option; choices = null; seasons = emptyMap(); stream = null; manualQuality = false
                                 step = if (info.isMovie) PlaybackStep.Quality else PlaybackStep.Season
                             }
                         }
                         PlaybackStep.Season -> itemsIndexed(seasons.keys.toList()) { index, number ->
-                            CinematicButton("Сезон $number" + if (number == prefs.getString("lastSeason:${info.id}", "")) " • последний" else "", season == number,
+                            CinematicButton("Сезон $number" + if (number == lastSelection.season) " • последний" else "", season == number,
                                 if (index == 0) Modifier.focusRequester(firstOptionFocus) else Modifier) { season = number; step = PlaybackStep.Episode }
                         }
                         PlaybackStep.Episode -> itemsIndexed(seasons[season].orEmpty()) { index, number ->
-                            CinematicButton("Серия $number" + if (number == prefs.getString("lastEpisode:${info.id}", "") && season == prefs.getString("lastSeason:${info.id}", "")) " • последняя" else "", episode == number,
+                            CinematicButton("Серия $number" + if (number == lastSelection.episode && season == lastSelection.season) " • последняя" else "", episode == number,
                                 (if (index == 0) Modifier.focusRequester(firstOptionFocus) else Modifier).onFocusChanged {
                                     if (it.isFocused) voice?.let { selected -> prefetch.prepare(provider, info, selected, season, number) }
                                 }) {
@@ -398,16 +452,18 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
                         }
                     }
                     if (step == PlaybackStep.Voice && info.voices.isEmpty()) item {
-                        Text("На странице нет доступных озвучек. Возможно, релиз ещё не опубликован.", color = Color.White)
+                        Text("На странице нет доступных озвучек. Возможно, релиз ещё не опубликован.", color = CinemaStyle.Text)
                     }
                 }
                 error?.let { message -> item {
-                    Text(message, color = Color(0xFFFFB5B9), fontSize = 17.sp)
+                    Text(message, color = CinemaStyle.Error, fontSize = 17.sp)
                     if (step == PlaybackStep.Season || step == PlaybackStep.Quality) {
                         Spacer(Modifier.height(12.dp))
                         CinematicButton("Повторить загрузку", true) { retry++ }
                     }
                 } }
+            }
+            }
             }
             if (optionListState.canScrollBackward) Box(Modifier.align(androidx.compose.ui.Alignment.TopCenter).fillMaxWidth().height(30.dp)
                 .background(Brush.verticalGradient(listOf(CinemaStyle.Surface, Color.Transparent))))
@@ -415,6 +471,7 @@ internal fun PlaybackDialog(provider: String, playerPackage: String, title: Stri
                 .background(Brush.verticalGradient(listOf(Color.Transparent, CinemaStyle.Surface))))
             }
             CinematicButton(if (busy) "Отменить и назад" else "Назад", false, onClick = ::back)
+        }
         }
     }
 }

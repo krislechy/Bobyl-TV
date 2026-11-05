@@ -1,6 +1,8 @@
 package com.bobyl.tv
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,6 +33,25 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.Text
+
+@Composable
+internal fun SettingsPair(first: @Composable () -> Unit, second: (@Composable () -> Unit)? = null) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth >= 640.dp) {
+            if (second == null) Box(Modifier.width((maxWidth - 24.dp) / 2)) { first() }
+            else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                Box(Modifier.weight(1f)) { first() }
+                Box(Modifier.weight(1f)) { second() }
+            }
+        } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            first()
+            second?.invoke()
+        }
+    }
+}
+
+@Composable
+internal fun SettingsSingle(content: @Composable () -> Unit) = SettingsPair(first = content)
 
 @Composable
 internal fun SettingsChoice(label: String, options: List<Pair<String, String>>, selected: String, compactPopup: Boolean = true, choose: (String) -> Unit) {
@@ -64,13 +85,15 @@ internal fun SettingsChoice(label: String, options: List<Pair<String, String>>, 
         }
         val popupModifier = if (compactPopup) Modifier.widthIn(max = 320.dp).fillMaxWidth()
             else Modifier.fillMaxWidth(.62f).heightIn(max = 440.dp)
+        CinemaFocusFrameHost {
         Column(popupModifier
-            .clip(RoundedCornerShape(CinemaStyle.PanelCorner)).background(CinemaStyle.Background)
+            .cinemaSurface(focused = false, shape = RoundedCornerShape(CinemaStyle.PanelCorner))
             .padding(if (compactPopup) 20.dp else 24.dp), verticalArrangement = Arrangement.spacedBy(if (compactPopup) 12.dp else 16.dp)) {
             Text(label, color = CinemaStyle.Text, fontSize = if (compactPopup) 22.sp else 26.sp, fontWeight = FontWeight.SemiBold)
             val listModifier = if (compactPopup) Modifier.height((choices.size * 52 + 8).coerceAtMost(260).dp)
                 else Modifier.weight(1f, fill = false)
-            LazyColumn(listModifier.fillMaxWidth().popupScrollIndicator(listState).padding(end = 10.dp), state = listState,
+            CinemaButtonFocusGroup {
+            LazyColumn(listModifier.fillMaxWidth().cinemaFilmViewport().popupScrollIndicator(listState).padding(end = 10.dp), state = listState,
                 verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(4.dp)) {
                 items(choices, key = { it.first }) { (value, title) ->
                     val modifier = if (value == choices.getOrNull(selectedIndex)?.first)
@@ -81,44 +104,76 @@ internal fun SettingsChoice(label: String, options: List<Pair<String, String>>, 
                     }
                 }
             }
+            }
             if (!compactPopup) CinematicButton("Отмена", false) { expanded = false }
+        }
         }
     }
 }
 
 @Composable
-internal fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(top = 20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+internal fun SettingsSection(title: String, first: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = if (first) 0.dp else 20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text(title, color = CinemaStyle.Accent, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+            Text(title, color = CinemaStyle.Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f).height(1.dp).background(CinemaStyle.Outline))
         }
-        content()
+        CinemaButtonFocusGroup { content() }
     }
 }
 
 @Composable
 internal fun SettingsToggle(label: String, checked: Boolean, toggle: () -> Unit) {
-    SettingValueRow(label, if (checked) "Включено" else "Выключено", onClick = toggle)
+    var focused by remember { mutableStateOf(false) }
+    val interaction = remember { MutableInteractionSource() }
+    val frameTarget = rememberCinemaButtonFocusTarget(focused)
+    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp)
+        .cinemaFilmTarget(frameTarget)
+        .onFocusChanged { focused = it.isFocused }
+        .clickable(interactionSource = interaction, indication = null, onClick = toggle)
+        .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = CinemaStyle.Text, fontSize = 17.sp, lineHeight = 24.sp, modifier = Modifier.weight(1f))
+        Canvas(Modifier.size(42.dp, 24.dp)) {
+            val radius = size.height / 2f
+            drawRoundRect(if (checked) CinemaStyle.Accent else CinemaStyle.Outline,
+                cornerRadius = CornerRadius(radius, radius))
+            drawCircle(if (checked) CinemaStyle.OnAccent else CinemaStyle.Text,
+                radius = radius - 3.dp.toPx(),
+                center = Offset(if (checked) size.width - radius else radius, radius))
+        }
+    }
 }
 
 @Composable
 private fun SettingValueRow(
-    label: String, value: String, modifier: Modifier = Modifier, dropdown: Boolean = false, onClick: () -> Unit,
+    label: String, value: String, modifier: Modifier = Modifier, dropdown: Boolean = false, checked: Boolean? = null, onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val frameTarget = rememberCinemaButtonFocusTarget(focused)
     val shape = RoundedCornerShape(CinemaStyle.Corner)
     val foreground = CinemaStyle.Text
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+    // Label and value form one native focus row, including when adjacent sections use left-aligned actions.
+    Row(modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
+        .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+        horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("$label:", color = CinemaStyle.Text, fontSize = 17.sp, lineHeight = 24.sp, modifier = Modifier.weight(.42f))
-        Row(modifier.weight(.58f).heightIn(min = 48.dp).clip(shape)
-            .background(if (focused) CinemaStyle.Raised else CinemaStyle.Surface)
-            .border(if (focused) 3.dp else 1.dp, if (focused) CinemaStyle.Focus else CinemaStyle.Outline, shape)
-            .onFocusChanged { focused = it.isFocused }.clickable(onClick = onClick)
+        Row(Modifier.weight(.58f).heightIn(min = 52.dp)
+            .cinemaSurface(focused, selected = checked == true, pressed = pressed, shape = shape, focusFrameTarget = frameTarget)
             .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(value, color = foreground, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium,
                 maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (checked != null) Canvas(Modifier.size(42.dp, 24.dp)) {
+                val radius = size.height / 2f
+                drawRoundRect(if (checked) CinemaStyle.Accent else CinemaStyle.Outline,
+                    cornerRadius = CornerRadius(radius, radius))
+                drawCircle(if (checked) CinemaStyle.OnAccent else CinemaStyle.Text,
+                    radius = radius - 3.dp.toPx(),
+                    center = Offset(if (checked) size.width - radius else radius, radius))
+            }
             if (dropdown) Canvas(Modifier.size(12.dp)) {
                 val stroke = 2.dp.toPx()
                 drawLine(foreground, Offset(0f, size.height * .3f), Offset(size.width * .5f, size.height * .75f), stroke)

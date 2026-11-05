@@ -6,6 +6,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
@@ -39,9 +41,14 @@ import com.bobyl.tv.data.CatalogFilm
 @Composable
 internal fun PersonalRatingButton(provider: String, filmId: String, entryFocus: FocusRequester, onClick: () -> Unit) {
     val buttonSize = 48.dp
-    val model: PersonalRatingViewModel = viewModel(key = "personal-rating:$provider:$filmId")
+    val actions = LocalFilmActions.current
+    val actionKey = currentFilmActionKey(provider, filmId)
+    val application = androidx.compose.ui.platform.LocalContext.current.applicationContext as android.app.Application
+    val model: PersonalRatingViewModel = viewModel(key = "personal-rating:${actionKey.film}") { PersonalRatingViewModel(application, actions, actionKey) }
     val state by model.state.collectAsState()
     var focused by remember { mutableStateOf(false) }
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     val shape = RoundedCornerShape(CinemaStyle.Corner)
     LaunchedEffect(provider, filmId) { model.load(provider, filmId) }
     if (state.loading) {
@@ -49,11 +56,10 @@ internal fun PersonalRatingButton(provider: String, filmId: String, entryFocus: 
         return
     }
     val rated = (state.value ?: 0) > 0
-    Box(Modifier.size(buttonSize).focusRequester(entryFocus).clip(shape)
-        .background(CinemaStyle.Raised)
-        .border(if (focused) 3.dp else 1.dp, if (focused) CinemaStyle.Focus else CinemaStyle.Outline, shape)
+    val frameTarget = rememberCinemaButtonFocusTarget(focused)
+    Box(Modifier.size(buttonSize).focusRequester(entryFocus).cinemaSurface(focused, selected = rated, pressed = pressed, shape = shape, focusFrameTarget = frameTarget)
         .onFocusChanged { focused = it.isFocused }
-        .clickable(onClickLabel = if (rated) "Изменить оценку ${state.value}" else "Оценить фильм", onClick = onClick),
+        .clickable(interactionSource = interaction, indication = null, onClickLabel = if (rated) "Изменить оценку ${state.value}" else "Оценить фильм", onClick = onClick),
         contentAlignment = Alignment.Center) {
         Image(painterResource(R.drawable.personal_rating), contentDescription = null,
             modifier = Modifier.fillMaxSize(),
@@ -77,10 +83,6 @@ internal fun PersonalRatingButton(provider: String, filmId: String, entryFocus: 
                     starCentreY - scoreBounds.exactCenterY(), scorePaint)
             }
         }
-        else Canvas(Modifier.align(Alignment.TopEnd).padding(4.dp).size(8.dp)) {
-            drawLine(CinemaStyle.Accent, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 1.5.dp.toPx(), StrokeCap.Round)
-            drawLine(CinemaStyle.Accent, Offset(size.width / 2, 0f), Offset(size.width / 2, size.height), 1.5.dp.toPx(), StrokeCap.Round)
-        }
         ActionTooltip(if (rated) "Изменить оценку: ${state.value}" else "Оценить фильм", focused)
     }
 }
@@ -88,7 +90,10 @@ internal fun PersonalRatingButton(provider: String, filmId: String, entryFocus: 
 @Composable
 internal fun PersonalRatingPanel(provider: String, filmId: String, entryFocus: FocusRequester,
     initiallyExpanded: Boolean = false, onSubmitted: () -> Unit = {}, onRated: (Pair<String, String>) -> Unit) {
-    val model: PersonalRatingViewModel = viewModel(key = "personal-rating:$provider:$filmId")
+    val actions = LocalFilmActions.current
+    val actionKey = currentFilmActionKey(provider, filmId)
+    val application = androidx.compose.ui.platform.LocalContext.current.applicationContext as android.app.Application
+    val model: PersonalRatingViewModel = viewModel(key = "personal-rating:${actionKey.film}") { PersonalRatingViewModel(application, actions, actionKey) }
     val state by model.state.collectAsState()
     val currentOnRated by rememberUpdatedState(onRated)
     val currentOnSubmitted by rememberUpdatedState(onSubmitted)
@@ -128,11 +133,11 @@ internal fun PersonalRatingPanel(provider: String, filmId: String, entryFocus: F
             } else
             if (expanded) {
                 var focused by remember { mutableStateOf(false) }
+                val interaction = remember { MutableInteractionSource() }
+                val pressed by interaction.collectIsPressedAsState()
                 val shape = RoundedCornerShape(CinemaStyle.Corner)
                 Box(Modifier.width(204.dp).height(54.dp).focusRequester(entryFocus).focusRequester(wheelFocus)
-                    .shadow(8.dp, shape, clip = false)
-                    .clip(shape).background(Brush.verticalGradient(listOf(CinemaStyle.Background, CinemaStyle.Raised, CinemaStyle.Background)))
-                    .border(if (focused) 3.dp else 1.dp, if (focused) CinemaStyle.Focus else CinemaStyle.Outline, shape)
+                    .cinemaSurface(focused, pressed = pressed, shape = shape)
                     .onFocusChanged { focused = it.isFocused; ratingFocused = it.isFocused }
                     .onPreviewKeyEvent { event ->
                         if (event.key == Key.DirectionLeft || event.key == Key.DirectionRight) {
@@ -141,7 +146,7 @@ internal fun PersonalRatingPanel(provider: String, filmId: String, entryFocus: F
                             true
                         } else false
                     }
-                    .clickable {
+                    .clickable(interactionSource = interaction, indication = null) {
                         if (!state.saving) {
                             if (draft == state.value) { editing = false; restoreFocus = true; currentOnSubmitted() }
                             else { submitted = true; model.rate(provider, filmId, draft) }
@@ -152,9 +157,7 @@ internal fun PersonalRatingPanel(provider: String, filmId: String, entryFocus: F
                         RatingWheelArrow(false, draft > 1)
                         RatingWheelDigit(draft - 2, -2)
                         RatingWheelDigit(draft - 1, -1)
-                        Box(Modifier.size(44.dp, 40.dp).shadow(6.dp, shape, clip = false)
-                            .background(Brush.verticalGradient(listOf(lerp(CinemaStyle.Accent, CinemaStyle.Text, .18f), CinemaStyle.Accent,
-                                lerp(CinemaStyle.Accent, CinemaStyle.Background, .2f))), shape), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(44.dp, 40.dp).background(CinemaStyle.Accent, shape), contentAlignment = Alignment.Center) {
                             Text(draft.toString(), color = CinemaStyle.OnAccent, fontSize = 25.sp, fontWeight = FontWeight.Bold,
                                 maxLines = 1, softWrap = false)
                         }
@@ -169,11 +172,12 @@ internal fun PersonalRatingPanel(provider: String, filmId: String, entryFocus: F
                 }
             } else {
                 var focused by remember { mutableStateOf(false) }
+                val interaction = remember { MutableInteractionSource() }
+                val pressed by interaction.collectIsPressedAsState()
                 Box(Modifier.height(48.dp).widthIn(min = 52.dp).focusRequester(entryFocus).focusRequester(scoreFocus)
-                    .background(if (focused) CinemaStyle.Selected else CinemaStyle.Surface, RoundedCornerShape(CinemaStyle.Corner))
-                    .border(if (focused) 3.dp else 1.dp, if (focused) CinemaStyle.Focus else CinemaStyle.Outline, RoundedCornerShape(CinemaStyle.Corner))
+                    .cinemaSurface(focused, selected = (state.value ?: 0) > 0, pressed = pressed)
                     .onFocusChanged { focused = it.isFocused; ratingFocused = it.isFocused }
-                    .clickable {
+                    .clickable(interactionSource = interaction, indication = null) {
                         if (!state.loading) { draft = state.value?.takeIf { it > 0 } ?: 5; editing = true; restoreFocus = true }
                     }.padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
                     Text(if (state.value == null || state.value == 0) "?" else state.value.toString(),
@@ -181,17 +185,21 @@ internal fun PersonalRatingPanel(provider: String, filmId: String, entryFocus: F
                 }
             }
         }
-        if (state.error.isNotBlank()) Text(state.error, color = Color(0xFFFFB5B9), fontSize = 14.sp)
+        if (state.error.isNotBlank()) Text(state.error, color = CinemaStyle.Error, fontSize = 14.sp)
     }
 }
 
 @Composable
 internal fun FilmRatingDialog(provider: String, film: CatalogFilm, dismiss: () -> Unit,
     onRated: (Pair<String, String>) -> Unit = {}) {
+    if (LocalCardSession.current == null) {
+        CardViewModelScope(provider, film.url) { FilmRatingDialog(provider, film, dismiss, onRated) }
+        return
+    }
     val entryFocus = remember { FocusRequester() }
     Dialog(onDismissRequest = dismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(Modifier.widthIn(max = 344.dp).fillMaxWidth().clip(RoundedCornerShape(CinemaStyle.PanelCorner))
-            .background(CinemaStyle.Background).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            .cinemaSurface(focused = false, shape = RoundedCornerShape(CinemaStyle.PanelCorner)).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Оцените фильм", color = CinemaStyle.Text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
             Text(film.title, color = CinemaStyle.Muted, fontSize = 16.sp, maxLines = 2,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)

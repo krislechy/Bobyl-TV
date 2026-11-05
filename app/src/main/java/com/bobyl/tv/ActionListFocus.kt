@@ -13,15 +13,16 @@ internal class ActionListFocus {
     var focused by mutableStateOf<String?>(null)
     val targets = mutableMapOf<String, FocusRequester>()
 
-    @Composable
-    fun target(key: String): Modifier {
-        val requester = remember(key) { FocusRequester() }
-        DisposableEffect(key, requester) {
-            targets[key] = requester
-            onDispose { if (targets[key] === requester) targets.remove(key) }
-        }
-        return Modifier.focusRequester(requester).onFocusChanged { if (it.isFocused) focused = key }
+}
+
+@Composable
+internal fun Modifier.actionListTarget(focus: ActionListFocus, key: String): Modifier {
+    val requester = remember(key) { FocusRequester() }
+    DisposableEffect(key, requester) {
+        focus.targets[key] = requester
+        onDispose { if (focus.targets[key] === requester) focus.targets.remove(key) }
     }
+    return this.focusRequester(requester).onFocusChanged { if (it.isFocused) focus.focused = key }
 }
 
 @Composable

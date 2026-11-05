@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.webkit.CookieManager
 import androidx.lifecycle.ViewModelStore
 import com.bobyl.tv.data.AuthRepository
+import com.bobyl.tv.data.AccountSessionGuard
 import com.bobyl.tv.data.CatalogUrls
 import com.bobyl.tv.data.ExtrasRepository
 import com.bobyl.tv.data.historyFilmKey
@@ -46,7 +47,10 @@ internal class HistorySyncChecks(private val instrumentation: Instrumentation) {
                     stage = "detail action"
                     lateinit var detail: FilmHistoryViewModel
                     instrumentation.runOnMainSync {
-                        detail = FilmHistoryViewModel(application)
+                        val actions = FilmActionsViewModel(application)
+                        store.put("actions", actions)
+                        detail = FilmHistoryViewModel(application, actions,
+                            FilmActionKey(AccountSessionGuard.shared.current(provider), historyFilmKey(entry.film.url)))
                         store.put("detail", detail)
                         detail.load(provider, entry.film.url)
                     }

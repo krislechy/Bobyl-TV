@@ -12,6 +12,39 @@ internal object HistoryDates {
     private val locale = Locale.forLanguageTag("ru")
     private val zone = TimeZone.getTimeZone("Europe/Moscow")
 
+    /** Calendar-only dates sort at midnight; absent playback time is never invented. */
+    fun timestamp(raw: String, now: Long = System.currentTimeMillis()): Long? {
+        val text = raw.lowercase(locale).replace('\u00a0', ' ').trim()
+        if (text.isBlank()) return null
+        val relativeDays = when {
+            "позавчера" in text -> 2
+            "вчера" in text -> 1
+            "сегодня" in text -> 0
+            else -> null
+        }
+        if (relativeDays != null) {
+            val time = Regex("(?<!\\d)([01]?\\d|2[0-3]):([0-5]\\d)(?!\\d)").find(text)
+            return Calendar.getInstance(zone, locale).apply {
+                timeInMillis = now
+                add(Calendar.DAY_OF_MONTH, -relativeDays)
+                set(Calendar.HOUR_OF_DAY, time?.groupValues?.get(1)?.toInt() ?: 0)
+                set(Calendar.MINUTE, time?.groupValues?.get(2)?.toInt() ?: 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        }
+        val formatted = format(raw, now)
+        val pattern = if (Regex("\\d{2}\\.\\d{2}\\.\\d{4} \\d{2}:\\d{2}").matches(formatted))
+            "dd.MM.yyyy HH:mm" else "dd.MM.yyyy"
+        val position = ParsePosition(0)
+        val date = SimpleDateFormat(pattern, locale).apply { timeZone = zone; isLenient = false }
+            .parse(formatted, position)?.takeIf { position.index == formatted.length } ?: return null
+        if (!Regex("\\d{4}").containsMatchIn(text) && date.time > now) {
+            return Calendar.getInstance(zone, locale).apply { time = date; add(Calendar.YEAR, -1) }.timeInMillis
+        }
+        return date.time
+    }
+
     fun format(raw: String, now: Long = System.currentTimeMillis()): String {
         val text = raw.lowercase(locale).replace('\u00a0', ' ').trim()
         if (text.isEmpty()) return ""
@@ -27,11 +60,12 @@ internal object HistoryDates {
             calendar.add(Calendar.DAY_OF_MONTH, -relativeDays)
             calendar.time
         } else {
-            val numeric = Regex("(?<!\\d)(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}[./]\\d{1,2}[./]\\d{4})(?!\\d)").find(text)?.value
+            val numeric = Regex("(?<!\\d)(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}[./-]\\d{1,2}[./-]\\d{4})(?!\\d)").find(text)?.value
             val named = Regex("(?<!\\d)\\d{1,2}\\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)(?:\\s+\\d{4})?").find(text)?.value
             val token = numeric ?: named ?: return raw.trim()
             val pattern = when {
                 numeric?.matches(Regex("\\d{4}-.*")) == true -> "yyyy-MM-dd"
+                numeric != null && '-' in numeric -> "d-M-yyyy"
                 numeric != null && '/' in numeric -> "d/M/yyyy"
                 numeric != null -> "d.M.yyyy"
                 else -> "d MMMM yyyy"

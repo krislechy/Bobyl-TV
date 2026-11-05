@@ -13,6 +13,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -26,13 +27,15 @@ internal interface StartupImageTracker {
 internal class StartupViewModel(application: Application) : AndroidViewModel(application), StartupImageTracker {
     private val auth = AuthRepository(application)
     private var identity = ""
-    private var provider = ""
     private var session: Deferred<String?>? = null
+    private val preparedSessions = MutableStateFlow<Pair<String, Deferred<String?>>?>(null)
     private var contentReady = CompletableDeferred<Unit>()
     private var background: Job? = null
-    private var badge: Job? = null
-    private var historyRevision = 0
     private var startupComplete = false
+    private var primaryPrepared = false
+    private var homePrepared = false
+    private val mutableContentPrepared = MutableStateFlow(false)
+    val contentPrepared = mutableContentPrepared.asStateFlow()
     private val pendingImages = MutableStateFlow(0)
     private val mutableUpdateCount = MutableStateFlow(0)
     val updateCount = mutableUpdateCount.asStateFlow()
@@ -42,16 +45,22 @@ internal class StartupViewModel(application: Application) : AndroidViewModel(app
     suspend fun prepareSession(value: String, startMenu: Int): String? {
         val nextIdentity = "${CatalogUrls.provider(value)}|${PageCache.generation()}"
         if (identity != nextIdentity) {
+            val replacingSession = identity.isNotBlank()
             identity = nextIdentity
-            provider = value
             background?.cancel()
-            badge?.cancel()
             session?.cancel()
             contentReady = CompletableDeferred()
+            if (replacingSession && !startupComplete) {
+                primaryPrepared = false
+                homePrepared = false
+                mutableContentPrepared.value = false
+            }
+            publishContentPrepared()
             mutableUpdateCount.value = 0
             mutablePreparationErrors.value = emptyMap()
             val restored = viewModelScope.async { auth.restore(value) }
             session = restored
+            preparedSessions.value = CatalogUrls.provider(value) to restored
             val ready = contentReady
             viewModelScope.launch {
                 optional("Локальная история") {
@@ -60,51 +69,39 @@ internal class StartupViewModel(application: Application) : AndroidViewModel(app
                 optional("Плееры") { withContext(Dispatchers.IO) { installedPlayers(getApplication()) } }
             }
             background = viewModelScope.launch {
-                val account = try { restored.await() }
+                try { restored.await() }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) {
                     mutablePreparationErrors.update { it + ("Сессия" to networkErrorMessage(failure)) }
-                    null
                 }
                 ready.await()
                 // One optional network operation at a time, after primary content.
-                optional("Новые серии") {
-                    mutableUpdateCount.value = ExtrasRepository().trackedUpdates(value).count { it.tracked }
-                }
                 if (PageCache.durationMillis() == 0L) return@launch
-                optional("Категории") { BrowseRepository().filters(value) }
-                if (account != null) {
-                    optional("Избранное") { LibraryRepository().categories(value) }
-                    optional("Серверная история") { ExtrasRepository().history(value) }
-                }
-                if (startMenu != 0) optional("Главная") {
-                    CatalogRepository().load(value, CatalogSection.Popular, 1, "")
-                }
-                if (startMenu != 1) optional("Новинки") {
-                    CatalogRepository().load(value, CatalogSection.Slider, 1, "")
-                }
+                // Home now prepares its real shared models. Do not retry those requests via legacy warming.
+                if (startMenu != 6) optional("Категории") { BrowseRepository().filters(value) }
             }
         }
         return checkNotNull(session).await()
     }
 
-    fun primaryContentReady() { contentReady.complete(Unit) }
+    suspend fun awaitPreparedSession(value: String): String? {
+        val provider = CatalogUrls.provider(value)
+        val prepared = preparedSessions.filterNotNull().first { it.first == provider }
+        return prepared.second.await()
+    }
 
-    fun refreshUpdateCount(revision: Int) {
-        if (revision == historyRevision) return
-        historyRevision = revision
-        val currentProvider = provider.takeIf { it.isNotBlank() } ?: return
-        val currentSession = session ?: return
-        val ready = contentReady
-        badge?.cancel()
-        badge = viewModelScope.launch {
-            optional("Новые серии") {
-                currentSession.await()
-                ready.await()
-                mutableUpdateCount.value = ExtrasRepository().trackedUpdates(currentProvider, force = true).count { it.tracked }
-            }
+    fun primaryContentReady() { primaryPrepared = true; publishContentPrepared() }
+
+    fun homeContentReady() { homePrepared = true; publishContentPrepared() }
+
+    private fun publishContentPrepared() {
+        if (primaryPrepared && homePrepared) {
+            contentReady.complete(Unit)
+            mutableContentPrepared.value = true
         }
     }
+
+    suspend fun awaitPreparedContent() { contentReady.await(); awaitVisibleImages() }
 
     fun showUpdateCount(count: Int) { mutableUpdateCount.value = count }
 

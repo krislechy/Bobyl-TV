@@ -5,6 +5,9 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,12 +32,14 @@ import kotlinx.coroutines.delay
 private const val MinimumStartupDurationMillis = 2_000L
 
 @Composable
-internal fun StartupLoadingScreen(onMinimumElapsed: () -> Unit, modifier: Modifier = Modifier) {
+internal fun StartupLoadingScreen(onMinimumElapsed: () -> Unit, modifier: Modifier = Modifier,
+    error: Boolean = false, retry: () -> Unit = {}) {
     var imageLoaded by remember { mutableStateOf(false) }
     val currentOnMinimumElapsed by rememberUpdatedState(onMinimumElapsed)
     val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+    val retryFocus = remember { FocusRequester() }
+    LaunchedEffect(error) {
+        if (error) retryFocus.requestFocus() else focusRequester.requestFocus()
     }
     LaunchedEffect(imageLoaded) {
         if (imageLoaded) {
@@ -44,7 +49,7 @@ internal fun StartupLoadingScreen(onMinimumElapsed: () -> Unit, modifier: Modifi
             currentOnMinimumElapsed()
         }
     }
-    Box(modifier.fillMaxSize().background(Color(0xFF080F12))
+    Box(modifier.fillMaxSize().background(CinemaStyle.Background)
         .focusRequester(focusRequester).focusable()
         .pointerInput(Unit) {
             awaitPointerEventScope {
@@ -61,7 +66,11 @@ internal fun StartupLoadingScreen(onMinimumElapsed: () -> Unit, modifier: Modifi
             onError = { imageLoaded = true },
         )
         Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 56.dp)) {
-            LoadingIndicator("Загружаем…")
+            if (error) Column(Modifier.widthIn(max = 580.dp), verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Не удалось открыть данные приложения. Повторите попытку.", color = CinemaStyle.Text, fontSize = 18.sp)
+                CinematicButton("Повторить", true, Modifier.focusRequester(retryFocus), onClick = retry)
+            } else LoadingIndicator("Загружаем…")
         }
         Text("${BuildConfig.VERSION_NAME} · ${BuildConfig.BUILD_DATE} МСК",
             color = CinemaStyle.Muted, fontSize = 11.sp,

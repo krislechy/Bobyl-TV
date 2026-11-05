@@ -1,39 +1,21 @@
 package com.bobyl.tv
 
-import android.animation.ValueAnimator
-import android.os.Build
-import androidx.compose.foundation.lazy.LazyColumn
-
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
-import androidx.compose.ui.res.painterResource
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
@@ -48,16 +30,17 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -71,80 +54,103 @@ private val Surface = CinemaStyle.Surface
 private val Accent = CinemaStyle.Accent
 private val Muted = CinemaStyle.Muted
 
-private data class MenuItem(val id: Int, val icon: Int, val title: String)
 private val menu = listOf(
-    MenuItem(0, R.drawable.nav_home, "Главная"),
-    MenuItem(1, R.drawable.nav_news, "Новинки"),
-    MenuItem(6, R.drawable.nav_categories, "Категории"),
-    MenuItem(7, R.drawable.nav_history, "Продолжить"),
-    MenuItem(8, R.drawable.nav_updates, "Новые серии"),
-    MenuItem(3, R.drawable.nav_favorite, "Избранное"),
-    MenuItem(4, R.drawable.nav_search, "Поиск"),
-    MenuItem(5, R.drawable.nav_settings, "Настройки"),
+    RailDestination(0, R.drawable.nav_home, "Главная"),
+    RailDestination(1, R.drawable.nav_news, "Новинки"),
+    RailDestination(6, R.drawable.nav_categories, "Категории"),
+    RailDestination(7, R.drawable.nav_history, "Продолжить"),
+    RailDestination(8, R.drawable.nav_updates, "Новые серии"),
+    RailDestination(3, R.drawable.nav_favorite, "Избранное"),
+    RailDestination(4, R.drawable.nav_search, "Поиск"),
+    RailDestination(5, R.drawable.nav_settings, "Настройки"),
 )
 
 @Composable
-fun BobylTvApp() {
+fun BobylTvApp(startupFinished: Boolean, onStartupPrepared: () -> Unit) {
     val context = LocalContext.current
     val startup: StartupViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val filmActions: FilmActionsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val dashboard: HomeDashboardViewModel = androidx.lifecycle.viewmodel.compose.viewModel(key = "home-dashboard")
+    val accountState by dashboard.state.collectAsState()
+    var accountOpen by remember { mutableStateOf(false) }
     val updateCount by startup.updateCount.collectAsState()
-    val trackingRevision by com.bobyl.tv.data.ServerHistoryChanges.revision.collectAsState()
-    LaunchedEffect(trackingRevision) {
-        startup.refreshUpdateCount(trackingRevision)
-    }
-    var selectedMenu by rememberSaveable {
+    var storedMenu by rememberSaveable {
         val startup = context.getSharedPreferences("${context.packageName}_preferences", android.content.Context.MODE_PRIVATE).getInt("startupScreen", 0)
         mutableIntStateOf(startup.takeIf { id -> menu.any { it.id == id } } ?: 0)
     }
-    var historyScreenRevision by remember { mutableIntStateOf(0) }
+    val selectedMenu = storedMenu.takeIf { id -> menu.any { it.id == id } } ?: 0
+    var requestedHistoryTab by rememberSaveable { mutableStateOf<String?>(null) }
+    var sessionRevision by rememberSaveable { mutableIntStateOf(0) }
     val foregroundRefreshRevision = rememberForegroundRefreshRevision()
-    LaunchedEffect(selectedMenu) {
-        if (menu.none { it.id == selectedMenu }) selectedMenu = 0
+    val startupProvider = remember(context) {
+        context.getSharedPreferences("${context.packageName}_preferences", android.content.Context.MODE_PRIVATE)
+            .getString("ownProvider", "hdrzk.org") ?: "hdrzk.org"
+    }
+    var homeSessionReady by remember(startupProvider, sessionRevision) { mutableStateOf(false) }
+    LaunchedEffect(startupFinished, selectedMenu, startupProvider, sessionRevision) {
+        if (!startupFinished && selectedMenu != 0) {
+            try { startup.awaitPreparedSession(startupProvider) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { /* Home's bounded requests expose their own error/retry states. */ }
+            homeSessionReady = true
+        }
+    }
+    LaunchedEffect(startupFinished, selectedMenu, homeSessionReady, startupProvider, sessionRevision, foregroundRefreshRevision) {
+        if (!startupFinished && selectedMenu != 0 && homeSessionReady)
+            dashboard.loadAccount(startupProvider, sessionRevision, foregroundRefreshRevision)
+    }
+    LaunchedEffect(storedMenu) {
+        if (storedMenu != selectedMenu) storedMenu = selectedMenu
     }
     val screenState = rememberSaveableStateHolder()
     val railFocus = remember { FocusRequester() }
     val contentFocus = remember(selectedMenu) { FocusRequester() }
-    var startupFinished by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(startupFinished) {
-        if (startupFinished) railFocus.requestFocus()
+        if (startupFinished) { startup.finishStartup(); railFocus.requestFocus() }
     }
-    var minimumElapsed by remember { mutableStateOf(false) }
-    var startupReady by remember { mutableStateOf(false) }
-    val startupOpacity = remember { Animatable(1f) }
-    LaunchedEffect(minimumElapsed, startupReady) {
-        if (!startupFinished && minimumElapsed && startupReady) {
+    val startupReady by startup.contentPrepared.collectAsState()
+    val preparedCallback by androidx.compose.runtime.rememberUpdatedState(onStartupPrepared)
+    LaunchedEffect(startupReady) {
+        if (startupReady && !startupFinished) {
             // Let the prepared content mount its images before observing completion.
             androidx.compose.runtime.withFrameNanos { }
-            startup.awaitVisibleImages()
-            startupOpacity.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(250, easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)),
-            )
-            startupFinished = true
-            startup.finishStartup()
+            startup.awaitPreparedContent()
+            preparedCallback()
         }
     }
 
-    androidx.compose.runtime.CompositionLocalProvider(LocalStartupImages provides startup) {
+    androidx.compose.runtime.CompositionLocalProvider(LocalStartupImages provides startup, LocalFilmActions provides filmActions) {
     MaterialTheme(colorScheme = darkColorScheme(
         primary = Accent, onPrimary = CinemaStyle.OnAccent,
         background = Background, onBackground = CinemaStyle.Text,
         surface = Surface, onSurface = CinemaStyle.Text,
         surfaceVariant = CinemaStyle.Raised, onSurfaceVariant = Muted,
     )) {
+        CinemaFocusFrameHost {
         Box(Modifier.fillMaxSize().onPreviewKeyEvent { !startupFinished }) {
+            if (!startupFinished && selectedMenu != 0 && homeSessionReady) {
+                // Mount the actual Home and shared Activity VMs under the illustrated startup layer.
+                Box(Modifier.fillMaxSize().padding(start = CollapsedRailWidth)
+                    .graphicsLayer { alpha = 0f }
+                    .clearAndSetSemantics { }
+                    .focusProperties { onEnter = { cancelFocusChange() } }.focusGroup()
+                    .onPreviewKeyEvent { true }
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
+                        }
+                    }) {
+                    HomeDashboard(startupProvider, sessionRevision, foregroundRefreshRevision, dashboard,
+                        onReady = startup::homeContentReady, onUpdateCount = startup::showUpdateCount,
+                        onAccount = {}, detailOpen = false, historyNavigate = {}, navigate = {}, open = { _, _, _ -> })
+                }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Background),
+                    .cinemaBackdrop(),
             ) {
-                NavigationRail(
-                    selected = selectedMenu,
-                    onSelected = { selectedMenu = it; if (it == 7 || it == 8) historyScreenRevision++ },
-                    updateCount = updateCount,
-                    focusRequester = railFocus,
-                    contentFocus = contentFocus,
-                )
+                Spacer(Modifier.width(CollapsedRailWidth))
                 screenState.SaveableStateProvider(selectedMenu) {
                     key(selectedMenu) {
                         Box(Modifier.weight(1f).fillMaxHeight()
@@ -163,165 +169,60 @@ fun BobylTvApp() {
                             }
                             .focusGroup()) {
                             ConnectedCatalog(selectedMenu, startup = startup,
-                                onStartupReady = { startup.primaryContentReady(); startupReady = true },
-                                onUpdateCount = startup::showUpdateCount, refreshRevision = historyScreenRevision + foregroundRefreshRevision)
+                                onStartupReady = {
+                                    startup.primaryContentReady()
+                                    if (selectedMenu == 0) startup.homeContentReady()
+                                },
+                                onUpdateCount = startup::showUpdateCount, refreshRevision = foregroundRefreshRevision,
+                                sessionRevision = sessionRevision, onSessionChanged = { sessionRevision++ },
+                                accountOpen = accountOpen, onAccountDismiss = { accountOpen = false },
+                                onAccountOpen = { accountOpen = true },
+                                historyTabRequest = requestedHistoryTab, onHistoryTabHandled = { requestedHistoryTab = null },
+                                onHistoryNavigate = { requestedHistoryTab = it; storedMenu = 7 },
+                                onNavigate = { storedMenu = it })
                         }
                     }
                 }
             }
+            CollapsibleNavigationRail(destinations = menu, selected = selectedMenu,
+                onSelected = { requestedHistoryTab = null; storedMenu = it }, updateCount = updateCount,
+                focusRequester = railFocus, contentFocus = contentFocus,
+                accountName = accountState.nickname, avatar = accountState.profile?.avatar.orEmpty(),
+                onAccount = { accountOpen = true },
+                modifier = Modifier.align(Alignment.TopStart).zIndex(2f))
             if (startupFinished) {
-                ClockNotch(Modifier.align(Alignment.TopCenter))
+                ClockNotch(Modifier.align(Alignment.TopCenter).zIndex(1f).graphicsLayer { clip = false })
             }
-            if (!startupFinished) {
-                StartupLoadingScreen(
-                    onMinimumElapsed = { minimumElapsed = true },
-                    modifier = Modifier.graphicsLayer { alpha = startupOpacity.value },
-                )
-            }
+        }
         }
     }
     }
 
-    BackHandler(enabled = startupFinished && selectedMenu != 0) { selectedMenu = 0 }
+    BackHandler(enabled = startupFinished && selectedMenu != 0) { storedMenu = 0 }
 }
 
 @Composable
-private fun NavigationRail(selected: Int, onSelected: (Int) -> Unit, updateCount: Int,
-    focusRequester: FocusRequester, contentFocus: FocusRequester) {
-    LazyColumn(
-        modifier = Modifier
-            .width(192.dp)
-            .fillMaxHeight()
-            .focusRequester(focusRequester)
-            .focusProperties {
-                onEnter = { focusRequester.restoreFocusedChild() }
-                onExit = {
-                    focusRequester.saveFocusedChild()
-                    when (requestedFocusDirection) {
-                        FocusDirection.Right -> {
-                            if (!contentFocus.requestFocus()) cancelFocusChange()
-                        }
-                        FocusDirection.Up, FocusDirection.Down, FocusDirection.Left -> cancelFocusChange()
-                    }
-                }
-            }
-            .background(CinemaStyle.Rail)
-            .padding(horizontal = 12.dp, vertical = 20.dp),
-    ) {
-        item { Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(CinemaStyle.Corner)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Image(painterResource(R.drawable.bobyl_icon), "Бобыль", Modifier.fillMaxSize())
-            }
-            Spacer(Modifier.width(12.dp))
-            Text("Бобыль", color = CinemaStyle.Text, fontSize = 23.sp, fontWeight = FontWeight.Bold)
-        }
-
-        Spacer(Modifier.height(20.dp)) }
-        itemsIndexed(menu, key = { _, item -> item.id }) { _, item ->
-            RailItem(
-                item = item,
-                selected = item.id == selected,
-                onClick = { onSelected(item.id) },
-                badge = if (item.id == 8) updateCount else 0,
-            )
-            Spacer(Modifier.height(4.dp))
-        }
-    }
-}
-
-@Composable
-private fun RailItem(item: MenuItem, selected: Boolean, onClick: () -> Unit, badge: Int = 0) {
+internal fun CinematicButton(label: String, primary: Boolean, modifier: Modifier = Modifier, leadingIcon: FieldGlyph? = null, enabled: Boolean = true, filmFocusFrame: Boolean = false, onClick: () -> Unit) {
     var focused by remember { androidx.compose.runtime.mutableStateOf(false) }
-    val foreground = when {
-        selected -> CinemaStyle.OnAccent
-        focused -> CinemaStyle.Text
-        else -> Muted
-    }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 44.dp)
-            .clip(RoundedCornerShape(CinemaStyle.Corner))
-            .background(
-                when {
-                    selected -> Accent
-                    focused -> CinemaStyle.Raised
-                    else -> Color.Transparent
-                },
-            )
-            .border(
-                BorderStroke(if (focused) 3.dp else 1.dp, if (focused) CinemaStyle.Focus else Color.Transparent),
-                RoundedCornerShape(CinemaStyle.Corner),
-            )
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box {
-            Image(painterResource(item.icon), null, Modifier.size(22.dp), colorFilter = ColorFilter.tint(foreground))
-            if (badge > 0) NewSeriesCountBadge(badge, Modifier.align(Alignment.TopEnd))
-        }
-        Spacer(Modifier.width(10.dp))
-        Text(
-            item.title,
-            color = foreground,
-            fontSize = 16.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-@Composable
-private fun NewSeriesCountBadge(count: Int, modifier: Modifier = Modifier) {
-    val motionEnabled = remember { Build.VERSION.SDK_INT < 26 || ValueAnimator.areAnimatorsEnabled() }
-    val pulse = if (motionEnabled) {
-        val transition = rememberInfiniteTransition(label = "new-series-count")
-        transition.animateFloat(.94f, 1.06f,
-            infiniteRepeatable(tween(1000, easing = CubicBezierEasing(.23f, 1f, .32f, 1f)), RepeatMode.Reverse), label = "pulse")
-    } else remember { mutableStateOf(1f) }
-    Box(modifier.size(if (count > 99) 22.dp else 18.dp).graphicsLayer {
-        scaleX = pulse.value
-        scaleY = pulse.value
-    }.background(Color(0xFFD52F45), CircleShape), contentAlignment = Alignment.Center) {
-        Text(if (count > 99) "99+" else count.toString(), color = Color.White,
-            fontSize = if (count > 99) 9.sp else 10.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
-    }
-}
-
-@Composable
-internal fun CinematicButton(label: String, primary: Boolean, modifier: Modifier = Modifier, leadingIcon: FieldGlyph? = null, onClick: () -> Unit) {
-    var focused by remember { androidx.compose.runtime.mutableStateOf(false) }
+    val interactions = remember { MutableInteractionSource() }
+    val pressed by interactions.collectIsPressedAsState()
+    val frameTarget = if (filmFocusFrame) rememberCinemaFilmFocusTarget(focused && enabled) else rememberCinemaButtonFocusTarget(focused && enabled)
     Box(
         modifier = modifier
             .heightIn(min = 44.dp)
-            .clip(RoundedCornerShape(CinemaStyle.Corner))
-            .background(if (primary) Accent else if (focused) CinemaStyle.Raised else Surface)
-            .border(
-                if (focused) 3.dp else 1.dp,
-                if (focused) CinemaStyle.Focus else Color.Transparent,
-                RoundedCornerShape(CinemaStyle.Corner),
-            )
+            .cinemaSurface(focused, selected = primary, pressed = pressed, enabled = enabled, focusFrameTarget = frameTarget)
             .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, interactionSource = interactions, indication = null, onClick = onClick)
             .padding(horizontal = 20.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
-        val color = if (primary) CinemaStyle.OnAccent else CinemaStyle.Text
+        val color = if (!enabled) CinemaStyle.Muted else CinemaStyle.Text
         if (leadingIcon == null) Text(label, color = color, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
             maxLines = 2, overflow = TextOverflow.Ellipsis)
-        else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        else Row(Modifier.wrapContentWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             FieldIcon(leadingIcon, color, Modifier.size(20.dp))
             Text(label, color = color, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                modifier = Modifier.weight(1f, fill = false), maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }

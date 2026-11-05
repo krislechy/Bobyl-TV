@@ -49,13 +49,21 @@ data class CatalogState(
 )
 
 class CatalogViewModel(
-    private val loadPage: suspend (String, CatalogSection, Int, String, String) -> List<CatalogFilm> = CatalogRepository()::load,
+    private val loadPage: suspend (String, CatalogSection, Int, String, String) -> List<CatalogFilm> = { provider, section, page, query, kind ->
+        CatalogRepository().load(provider, section, page, query, kind)
+    },
     private val computationDispatcher: CoroutineDispatcher = Dispatchers.Default,
-    private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
+    private val savedStateHandle: SavedStateHandle,
+    private val elapsedRealtime: () -> Long = android.os.SystemClock::elapsedRealtime,
+    private val loadFreshPage: suspend (String, CatalogSection, Int, String, String) -> List<CatalogFilm> = loadPage,
+    private val userClearRevision: () -> Int = { com.bobyl.tv.data.PersistentCache.userClearRevision.value },
 ) : ViewModel() {
     companion object {
         val Factory = viewModelFactory {
-            initializer { CatalogViewModel(savedStateHandle = createSavedStateHandle()) }
+            initializer { CatalogViewModel(savedStateHandle = createSavedStateHandle(),
+                loadFreshPage = { provider, section, page, query, kind ->
+                    CatalogRepository().load(provider, section, page, query, kind, force = true)
+                }) }
         }
     }
 
@@ -87,6 +95,9 @@ class CatalogViewModel(
     private var restoreThroughPage = 1
     private var loadedAt = 0L
     private var refreshPending = false
+    private var appliedUserClearRevision = userClearRevision()
+    private var attemptedUserClearRevision = appliedUserClearRevision
+    private var userClearRefreshPending = false
     private fun requestIdentity(request: CatalogRequest) = listOf(request.provider, request.section.name, request.query, request.kind)
     fun clear() {
         generation++
@@ -95,12 +106,14 @@ class CatalogViewModel(
         savedStateHandle.remove<Int>("loadedPage")
         savedStateHandle.remove<List<String>>("loadedRequest")
         mutableState.value = CatalogState(hasMore = false)
+        userClearRefreshPending = false
     }
 
     fun loadMore() {
         val current = mutableState.value
         val request = current.request ?: return
         if (current.loading || current.error != null || !current.hasMore) return
+        if (refreshForUserClear()) return
         launchRequest(request, more = true)
     }
 
@@ -108,22 +121,30 @@ class CatalogViewModel(
         val current = mutableState.value
         val request = current.request ?: return
         if (current.loading || current.error == null) return
-        launchRequest(request, more = current.page > 0 && !refreshPending, refresh = refreshPending)
+        if (attemptedUserClearRevision != userClearRevision()) {
+            refreshForUserClear()
+            return
+        }
+        launchRequest(request, more = current.page > 0 && !refreshPending, refresh = refreshPending, fresh = true)
     }
 
     fun refreshIfStale(force: Boolean = false) {
         val current = mutableState.value
         val request = current.request ?: return
         if (current.loading || current.error != null || loadedAt == 0L ||
-            (!force && android.os.SystemClock.elapsedRealtime() - loadedAt < com.bobyl.tv.data.PageCache.durationMillis())) return
+            (!force && elapsedRealtime() - loadedAt < com.bobyl.tv.data.PageCache.durationMillis())) return
         restoreThroughPage = current.page.coerceAtLeast(1)
-        launchRequest(request, more = false, refresh = true)
+        launchRequest(request, more = false, refresh = true, fresh = true)
     }
 
     fun load(provider: String, section: CatalogSection, query: String, kind: String = section.genre, sessionRevision: Int = 0) {
         val request = CatalogRequest(provider, section, query, kind, sessionRevision)
         // Recomposition and returning to the screen must not retry failures implicitly.
-        if (request == mutableState.value.request) { refreshIfStale(); return }
+        if (request == mutableState.value.request) {
+            if (!refreshForUserClear()) refreshIfStale()
+            return
+        }
+        userClearRefreshPending = false
         refreshPending = false
         restoreThroughPage = if (mutableState.value.request == null &&
             savedStateHandle.get<List<String>>("loadedRequest") == requestIdentity(request)) {
@@ -134,8 +155,21 @@ class CatalogViewModel(
         launchRequest(request, more = false)
     }
 
-    private fun launchRequest(request: CatalogRequest, more: Boolean, refresh: Boolean = false) {
+    private fun refreshForUserClear(): Boolean {
+        val current = mutableState.value
+        val request = current.request ?: return false
+        val epoch = userClearRevision()
+        if (appliedUserClearRevision == epoch || current.error != null && attemptedUserClearRevision == epoch) return false
+        if (current.loading) { userClearRefreshPending = true; return true }
+        restoreThroughPage = maxOf(restoreThroughPage, current.page).coerceAtLeast(1)
+        launchRequest(request, more = false, refresh = current.page > 0, fresh = true)
+        return true
+    }
+
+    private fun launchRequest(request: CatalogRequest, more: Boolean, refresh: Boolean = false, fresh: Boolean = false) {
         val requestGeneration = ++generation
+        val clearEpoch = userClearRevision()
+        attemptedUserClearRevision = clearEpoch
         job?.cancel()
         val visible = mutableState.value
         refreshPending = refresh
@@ -146,7 +180,8 @@ class CatalogViewModel(
             try {
                 do {
                     val page = previous.page + 1
-                    val films = loadPage(request.provider, request.section, page, request.query, request.kind)
+                    val loader = if (fresh) loadFreshPage else loadPage
+                    val films = loader(request.provider, request.section, page, request.query, request.kind)
                     val combined = withContext(computationDispatcher) { (previous.films + films).distinctBy { it.url } }
                     if (generation != requestGeneration) return@launch
                     previous = previous.copy(
@@ -158,14 +193,20 @@ class CatalogViewModel(
                 } while (previous.page < restoreThroughPage && previous.hasMore)
                 restoreThroughPage = 1
                 savedStateHandle["loadedPage"] = previous.page
-                if (!more) loadedAt = android.os.SystemClock.elapsedRealtime()
+                if (!more) loadedAt = elapsedRealtime()
                 refreshPending = false
+                appliedUserClearRevision = clearEpoch
                 mutableState.value = previous
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 if (generation == requestGeneration) mutableState.value = (if (refresh) visible else previous)
                     .copy(loading = false, restoring = false, error = networkErrorMessage(error))
+            } finally {
+                if (generation == requestGeneration && userClearRefreshPending) {
+                    userClearRefreshPending = false
+                    if (attemptedUserClearRevision != userClearRevision()) refreshForUserClear()
+                }
             }
         }
     }

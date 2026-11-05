@@ -2,6 +2,10 @@ package com.bobyl.tv
 
 import android.animation.ValueAnimator
 import android.os.Build
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
@@ -14,7 +18,11 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil3.compose.AsyncImagePainter
 
 internal enum class SkeletonLayout { Posters, Rows, Options, Details, Text, Profile, Suggestions, Status, Tabs, Filters }
@@ -25,20 +33,43 @@ private class SkeletonClock {
 }
 
 private val LocalSkeletonClock = staticCompositionLocalOf { SkeletonClock() }
+private val LocalCinemaMotion = staticCompositionLocalOf { true }
 internal val LocalStartupImages = staticCompositionLocalOf<StartupImageTracker?> { null }
+
+/** One settings observer at the app root; controls consume this value without new observers. */
+@Composable
+internal fun cinemaMotionEnabled(): Boolean = LocalCinemaMotion.current
 
 /** A single draw-only pulse, running only while at least one placeholder is visible. */
 @Composable
 internal fun SkeletonLoadingTheme(content: @Composable () -> Unit) {
     val clock = remember { SkeletonClock() }
-    val motion = remember { Build.VERSION.SDK_INT < 26 || ValueAnimator.areAnimatorsEnabled() }
+    val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    fun readMotion() = runCatching {
+        Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f &&
+            (Build.VERSION.SDK_INT < 26 || ValueAnimator.areAnimatorsEnabled())
+    }.getOrDefault(true)
+    var motion by remember(context) { mutableStateOf(readMotion()) }
+    DisposableEffect(context, lifecycle) {
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) { motion = readMotion() }
+        }
+        context.contentResolver.registerContentObserver(
+            Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE), false, observer)
+        val listener = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) motion = readMotion()
+        }
+        lifecycle.addObserver(listener)
+        onDispose { context.contentResolver.unregisterContentObserver(observer); lifecycle.removeObserver(listener) }
+    }
     val still = remember { mutableFloatStateOf(.7f) }
     val pulse = if (clock.users > 0 && motion) {
         val transition = rememberInfiniteTransition(label = "skeleton")
-        transition.animateFloat(.55f, 1f, infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Reverse), label = "pulse")
+        transition.animateFloat(.62f, .86f, infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Reverse), label = "pulse")
     } else still
     SideEffect { clock.pulse = pulse }
-    CompositionLocalProvider(LocalSkeletonClock provides clock, content = content)
+    CompositionLocalProvider(LocalSkeletonClock provides clock, LocalCinemaMotion provides motion, content = content)
 }
 
 /** Passive: never clickable or focusable, and never conceals errors after loading ends. */
@@ -50,12 +81,12 @@ internal fun SkeletonShape(modifier: Modifier = Modifier) {
         onDispose { clock.users-- }
     }
     Box(modifier.drawBehind {
-        drawRoundRect(CinemaStyle.Raised, cornerRadius = CornerRadius(6.dp.toPx()), alpha = clock.pulse.value)
+        drawRoundRect(CinemaStyle.Raised, cornerRadius = CornerRadius(CinemaStyle.Corner.toPx()), alpha = clock.pulse.value)
     })
 }
 
 @Composable
-internal fun SkeletonLoading(layout: SkeletonLayout = SkeletonLayout.Rows, modifier: Modifier = Modifier,
+internal fun SkeletonLoading(layout: SkeletonLayout, modifier: Modifier = Modifier,
     rows: Int = 3, columns: Int = 6, actions: Int = 2) {
     val gap = when (layout) { SkeletonLayout.Posters -> 18.dp; SkeletonLayout.Rows -> 6.dp; else -> 12.dp }
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap)) {

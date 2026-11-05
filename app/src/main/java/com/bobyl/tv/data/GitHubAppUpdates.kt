@@ -110,7 +110,7 @@ internal class GitHubAppUpdates(private val context: Context) {
             check(partial.renameTo(result)) { "Не удалось сохранить обновление" }
             result
         } finally { partial.delete(); connection.disconnect() }
-    }
+    }.also { file -> LocalFileIndex.verifiedApk(file, update.url) }
 
     @Suppress("DEPRECATION")
     private fun verifyApk(file: File, expectedVersion: Long) {

@@ -18,7 +18,7 @@ internal fun requireSuccess(doc: Document): JSONObject = responseJson(doc).also 
 
 data class HistorySaveSnapshot(val filmId: String, val voice: String, val season: String, val episode: String, val positionMs: Long)
 data class ContinueItem(val id: String, val film: CatalogFilm, val info: String, val season: String = "", val episode: String = "", val viewedAt: String = "", val watched: Boolean = false,
-    val save: HistorySaveSnapshot? = null)
+    val save: HistorySaveSnapshot? = null, val viewedTimestamp: Long? = HistoryDates.timestamp(viewedAt))
 data class SeriesUpdate(val date: String, val film: CatalogFilm, val info: String, val tracked: Boolean)
 data class ScheduleEntry(
     val group: String, val label: String, val id: String, val watched: Boolean,
@@ -81,8 +81,13 @@ class ExtrasRepository(private val transport: PageTransport = HtmlTransport()) {
             ?: error("Не удалось подготовить восстановление. Запись не удалена.")
         val season = entry.season.ifBlank { if (init.groupValues[1] == "Movies") "0" else init.groupValues[4] }
         val episode = entry.episode.ifBlank { if (init.groupValues[1] == "Movies") "0" else init.groupValues[5] }
-        val position = local?.takeIf { init.groupValues[1] == "Movies" || (it.season == season && it.episode == episode) }?.positionMs ?: 0L
-        entry.copy(save = HistorySaveSnapshot(init.groupValues[2], init.groupValues[3], season, episode, position))
+        val matchedLocal = local?.takeIf {
+            it.filmId == init.groupValues[2] && historyFilmKey(it.url) == historyFilmKey(entry.film.url) &&
+                (init.groupValues[1] == "Movies" || (it.season == season && it.episode == episode))
+        }
+        val voice = matchedLocal?.voice?.takeIf { it.isNotBlank() } ?: init.groupValues[3]
+        val position = matchedLocal?.positionMs ?: 0L
+        entry.copy(save = HistorySaveSnapshot(init.groupValues[2], voice, season, episode, position))
     }
 
     suspend fun restoreHistory(provider: String, entry: ContinueItem): ContinueItem = withContext(Dispatchers.IO) {
@@ -108,7 +113,7 @@ class ExtrasRepository(private val transport: PageTransport = HtmlTransport()) {
         require(entry.id.matches(Regex("[0-9]+")))
         if (entry.watched != watched) {
             requireSuccess(transport.post(CatalogUrls.provider(provider) + "engine/ajax/cdn_saves_view.php", mapOf("id" to entry.id)))
-            PreparedDataCache.clear()
+            PersistentCache.invalidate()
         }
         entry.copy(watched = watched)
     }
@@ -117,7 +122,7 @@ class ExtrasRepository(private val transport: PageTransport = HtmlTransport()) {
         val doc = transport.post(CatalogUrls.provider(provider) + "engine/ajax/cdn_saves_remove.php", mapOf("id" to id))
         // Some legacy endpoints return an empty body on success; reject explicit failures.
         if (doc.body().text().trim().startsWith("{")) requireSuccess(doc)
-        PreparedDataCache.clear()
+        PersistentCache.invalidate()
         if (notifyChanges) ServerHistoryChanges.changed()
     }
     suspend fun trackedUpdates(provider: String, force: Boolean = false): List<SeriesUpdate> {
@@ -194,11 +199,13 @@ class ExtrasRepository(private val transport: PageTransport = HtmlTransport()) {
         requireSuccess(transport.post(CatalogUrls.provider(provider) + "ajax/send_save/?t=${System.currentTimeMillis()}",
             mapOf("post_id" to filmId, "translator_id" to voice, "season" to season.ifBlank { "0" },
                 "episode" to episode.ifBlank { "0" }, "current_time" to seconds.toString())))
-        PreparedDataCache.clear()
+        PersistentCache.invalidate()
     }
     suspend fun updates(provider: String, force: Boolean = false): List<SeriesUpdate> = withContext(Dispatchers.IO) {
         val url = CatalogUrls.provider(provider)
-        transport.prepared(url, "updates", force = force) { ExtrasParser.updates(transport.preparedRoot(url, force)) }
+        val result = transport.prepared(url, "updates", force = force) { ExtrasParser.updates(transport.preparedRoot(url, force)) }
+        transport.rememberFilms(provider, result.map { it.film })
+        result
     }
     suspend fun updatePoster(url: String): String = withContext(Dispatchers.IO) {
         val document = transport.cachedGet(url)
@@ -209,16 +216,22 @@ class ExtrasRepository(private val transport: PageTransport = HtmlTransport()) {
     suspend fun watch(provider: String, id: String) {
         require(id.matches(Regex("[0-9]+")))
         requireSuccess(transport.post(CatalogUrls.provider(provider) + "engine/ajax/schedule_watched.php", mapOf("id" to id)))
-        PreparedDataCache.clear()
+        PersistentCache.invalidate()
     }
-    suspend fun person(url: String) = ExtrasParser.person(transport.cachedGet(url))
+    suspend fun person(url: String): PersonDetails {
+        val document = transport.cachedGet(url)
+        return withContext(Dispatchers.Default) { ExtrasParser.person(document) }
+    }
     suspend fun trailer(provider: String, id: String): String {
         require(id.matches(Regex("[0-9]+")))
-        val json = requireSuccess(transport.post(CatalogUrls.provider(provider) + "engine/ajax/gettrailervideo.php", mapOf("id" to id)))
-        val doc = Jsoup.parse(json.optString("code"), CatalogUrls.provider(provider))
-        val url = doc.selectFirst("iframe[src]")?.absUrl("src").orEmpty()
-            .ifBlank { doc.selectFirst("video[src], source[src]")?.absUrl("src").orEmpty() }
-        check(PlaybackParser.isMediaUrl(url)) { "Не удалось загрузить трейлер" }
-        return url
+        val document = transport.post(CatalogUrls.provider(provider) + "engine/ajax/gettrailervideo.php", mapOf("id" to id))
+        return withContext(Dispatchers.Default) {
+            val json = requireSuccess(document)
+            val doc = Jsoup.parse(json.optString("code"), CatalogUrls.provider(provider))
+            val url = doc.selectFirst("iframe[src]")?.absUrl("src").orEmpty()
+                .ifBlank { doc.selectFirst("video[src], source[src]")?.absUrl("src").orEmpty() }
+            check(PlaybackParser.isMediaUrl(url)) { "Не удалось загрузить трейлер" }
+            url
+        }
     }
 }
