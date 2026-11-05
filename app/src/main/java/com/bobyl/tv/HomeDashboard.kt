@@ -16,7 +16,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -89,13 +88,8 @@ internal fun HomeDashboard(provider: String, sessionRevision: Int, refreshRevisi
         item(key = "statistics") {
             CinemaButtonFocusGroup {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    HomeStatistic("Premium", when {
-                        state.accountLoading -> null
-                        state.profile?.premium == true -> homePremiumLabel(state.profile?.premiumInfo.orEmpty())
-                        state.profile != null -> "Не активен"
-                        else -> "—"
-                    }, FieldGlyph.Star, Modifier.weight(1f), highlighted = state.profile?.premium == true,
-                        progress = state.premiumFraction, onClick = onAccount)
+                    PremiumStatus(state.profile, state.accountLoading, state.premiumFraction,
+                        Modifier.weight(1f), onClick = onAccount)
                     HomeStatistic("Просмотрено", if (history.busy && entries.isEmpty()) null else if (history.error.isNotBlank() && entries.isEmpty()) "—" else watched.toString(),
                         FieldGlyph.Eye, Modifier.weight(1f), onClick = { historyNavigate("watched") })
                     HomeStatistic("В процессе", if (history.busy && entries.isEmpty()) null else if (history.error.isNotBlank() && entries.isEmpty()) "—" else continuing.size.toString(),
@@ -183,34 +177,6 @@ private fun HomeRowHeading(title: String, all: () -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Text(title, color = CinemaStyle.Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
         CinematicButton("Смотреть всё", false, leadingIcon = FieldGlyph.More, onClick = all)
-    }
-}
-
-@Composable
-private fun HomeStatistic(label: String, value: String?, icon: FieldGlyph, modifier: Modifier,
-    highlighted: Boolean = false, progress: Float? = null, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val target = rememberCinemaButtonFocusTarget(focused)
-    Row(modifier.height(62.dp).cinemaSurface(focused, selected = highlighted, pressed = pressed, focusFrameTarget = target)
-        .drawWithContent {
-            progress?.let { drawRect(CinemaStyle.Accent.copy(alpha = .16f),
-                size = size.copy(width = size.width * it.coerceIn(0f, 1f))) }
-            drawContent()
-        }
-        .onFocusChanged { focused = it.isFocused }.clickable(interactionSource = interaction, indication = null, onClick = onClick)
-        .padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-        if (icon == FieldGlyph.Eye) WatchStatusIcon(true, Modifier.size(25.dp))
-        else FieldIcon(icon, CinemaStyle.Accent, Modifier.size(25.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(label, color = CinemaStyle.Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (value == null) SkeletonShape(Modifier.fillMaxWidth(.8f).height(17.dp))
-            else Text(value, color = CinemaStyle.Text, fontSize = if (value.length > 12) 13.sp else 18.sp,
-                lineHeight = 17.sp, fontWeight = FontWeight.SemiBold,
-                maxLines = if (value.length > 12) 2 else 1, overflow = TextOverflow.Ellipsis)
-        }
     }
 }
 

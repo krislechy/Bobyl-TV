@@ -75,6 +75,110 @@ class HomeDashboardViewModelTest {
         } finally { model.viewModelScope.cancel() }
     }
 
+    @Test fun accountFailureAndUnconfirmedResponseAreNotPresentedAsGuest() = runTest(dispatcher) {
+        var response = 0
+        val model = HomeDashboardViewModel(RuntimeEnvironment.getApplication(), readAccountProfile = {
+            when (response) {
+                0 -> error("Fixture network failure")
+                1 -> null
+                else -> AccountProfile(null, "", false, "", "UnconfirmedNickname")
+            }
+        })
+        try {
+            model.loadAccount("account-error.example", 0); runCurrent()
+            assertNotNull(model.state.value.accountSession)
+            assertTrue(model.state.value.accountError.isNotBlank())
+            assertFalse(model.state.value.accountLoading)
+            assertNull(model.state.value.profile)
+            response = 1
+            model.loadAccount("account-error.example", 1); runCurrent()
+            assertEquals("", model.state.value.accountError)
+            assertFalse(model.state.value.accountLoading)
+            assertNull(model.state.value.profile)
+            response = 2
+            model.loadAccount("account-error.example", 2); runCurrent()
+            assertTrue(model.state.value.accountError.isNotBlank())
+            assertNull(model.state.value.profile)
+            assertEquals("", model.state.value.nickname)
+        } finally { model.viewModelScope.cancel() }
+    }
+
+    @Test fun foregroundRefreshAfterAccountFailureKeepsUnknownStateLoadingUntilTheResponse() = runTest(dispatcher) {
+        val nextProfile = CompletableDeferred<AccountProfile?>()
+        var reads = 0
+        val model = HomeDashboardViewModel(RuntimeEnvironment.getApplication(), readAccountProfile = {
+            if (++reads == 1) error("Fixture initial failure") else nextProfile.await()
+        })
+        try {
+            model.loadAccount("account-refresh-error.example", 0); runCurrent()
+            assertTrue(model.state.value.accountError.isNotBlank())
+            assertFalse(model.state.value.accountLoading)
+            assertNull(model.state.value.profile)
+            model.loadAccount("account-refresh-error.example", 0, refreshRevision = 1)
+            assertTrue(model.state.value.accountLoading)
+            assertEquals("", model.state.value.accountError)
+            assertNull(model.state.value.profile)
+            runCurrent()
+            assertEquals(2, reads)
+            assertTrue(model.state.value.accountLoading)
+            assertNull(model.state.value.profile)
+            nextProfile.complete(AccountProfile(true, "", false, "", "RefreshedNickname")); runCurrent()
+            assertFalse(model.state.value.accountLoading)
+            assertEquals("", model.state.value.accountError)
+            assertEquals("RefreshedNickname", model.state.value.nickname)
+        } finally { nextProfile.complete(null); model.viewModelScope.cancel() }
+    }
+
+    @Test fun explicitAccountErrorRetryUsesOneSharedRequestAndStopsAfterRecovery() = runTest(dispatcher) {
+        val recovered = CompletableDeferred<AccountProfile?>()
+        var reads = 0
+        val model = HomeDashboardViewModel(RuntimeEnvironment.getApplication(), readAccountProfile = {
+            if (++reads == 1) error("Fixture unavailable") else recovered.await()
+        })
+        try {
+            model.loadAccount("account-retry.example", 0); runCurrent()
+            val session = requireNotNull(model.state.value.accountSession)
+            model.loadAccount("account-retry.example", 0); runCurrent()
+            assertEquals(1, reads)
+            model.retryAccount("account-retry.example", 1, 0, session); runCurrent()
+            assertEquals(1, reads) // A callback from another revision cannot reset the current request key.
+            model.retryAccount("account-retry.example", 0, 0, session)
+            assertTrue(model.state.value.accountLoading)
+            model.retryAccount("account-retry.example", 0, 0, session)
+            model.loadAccount("account-retry.example", 0); runCurrent()
+            assertEquals(2, reads)
+            recovered.complete(AccountProfile(true, "", false, "", "RecoveredNickname")); runCurrent()
+            assertEquals("", model.state.value.accountError)
+            assertFalse(model.state.value.accountLoading)
+            assertEquals("RecoveredNickname", model.state.value.nickname)
+            model.retryAccount("account-retry.example", 0, 0, session); runCurrent()
+            assertEquals(2, reads)
+        } finally { recovered.complete(null); model.viewModelScope.cancel() }
+    }
+
+    @Test fun staleAccountRetryCannotReplaceTheNewSessionRequest() = runTest(dispatcher) {
+        val nextProfile = CompletableDeferred<AccountProfile?>()
+        var reads = 0
+        val model = HomeDashboardViewModel(RuntimeEnvironment.getApplication(), readAccountProfile = {
+            if (++reads == 1) error("Old owner fixture failure") else nextProfile.await()
+        })
+        try {
+            model.loadAccount("account-owner.example", 0); runCurrent()
+            val oldSession = requireNotNull(model.state.value.accountSession)
+            com.bobyl.tv.data.AccountSessionGuard.shared.change("account-owner.example") { }
+            model.loadAccount("account-owner.example", 0); runCurrent()
+            val newSession = requireNotNull(model.state.value.accountSession)
+            assertNotEquals(oldSession, newSession)
+            assertNull(model.state.value.profile)
+            model.retryAccount("account-owner.example", 0, 0, oldSession); runCurrent()
+            assertEquals(2, reads)
+            nextProfile.complete(AccountProfile(true, "", false, "", "CurrentOwner")); runCurrent()
+            assertEquals(newSession, model.state.value.accountSession)
+            assertEquals("CurrentOwner", model.state.value.nickname)
+            assertEquals("", model.state.value.accountError)
+        } finally { nextProfile.complete(null); model.viewModelScope.cancel() }
+    }
+
     @Test fun optionalPurchasedPeriodNeverBlocksNicknameAndUnchangedReentryDoesNotReadAgain() = runTest(dispatcher) {
         val period = CompletableDeferred<Int?>()
         var periodReads = 0

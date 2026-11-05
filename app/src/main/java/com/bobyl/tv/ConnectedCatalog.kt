@@ -76,8 +76,7 @@ internal fun ConnectedCatalog(menu: Int, startup: StartupViewModel, onStartupRea
     LaunchedEffect(provider, sessionRevision) {
         sessionReady = false
         try {
-            // Restore encrypted cookies only. Profile validation belongs to AuthSettings;
-            // running it here creates a competing network request during first catalog render.
+            // Restore encrypted cookies only; Home and the dialog share the dashboard profile request.
             startup.prepareSession(provider, menu)
         }
         catch (cancelled: CancellationException) { throw cancelled }
@@ -87,7 +86,14 @@ internal fun ConnectedCatalog(menu: Int, startup: StartupViewModel, onStartupRea
     LaunchedEffect(provider, sessionRevision, sessionReady, refreshRevision) {
         if (sessionReady) dashboard.loadAccount(provider, sessionRevision, refreshRevision)
     }
-    if (accountOpen) key(provider, sessionRevision) { AccountDialog(provider, auth, changed = onSessionChanged, dismiss = onAccountDismiss) }
+    if (accountOpen) key(provider, sessionRevision) {
+        val accountState by dashboard.state.collectAsState()
+        val expectedSession = com.bobyl.tv.data.AccountSessionGuard.shared.current(provider)
+        AccountDialog(provider, auth,
+            accountState = accountState.takeIf { sessionReady && it.accountSession == expectedSession } ?: HomeDashboardState(),
+            retryAccount = { dashboard.retryAccount(provider, sessionRevision, refreshRevision, expectedSession) },
+            changed = onSessionChanged, dismiss = onAccountDismiss)
+    }
     val model: CatalogViewModel = viewModel(key = "catalog-$menu", factory = CatalogViewModel.Factory)
     val state by model.state.collectAsState()
     val selection by model.selection.collectAsState()

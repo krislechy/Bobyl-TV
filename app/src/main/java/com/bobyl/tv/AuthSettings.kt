@@ -1,6 +1,5 @@
 package com.bobyl.tv
 
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -19,12 +18,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import com.bobyl.tv.data.AuthRepository
+import com.bobyl.tv.data.AccountSession
+import com.bobyl.tv.data.AccountSessionGuard
 import com.bobyl.tv.data.CatalogUrls
 import com.bobyl.tv.data.networkErrorMessage
-import com.bobyl.tv.data.AccountProfile
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -34,26 +35,42 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun AccountDialog(provider: String, auth: AuthRepository, changed: () -> Unit, dismiss: () -> Unit) {
+internal fun AccountDialog(provider: String, auth: AuthRepository, accountState: HomeDashboardState,
+    retryAccount: () -> Unit, changed: () -> Unit, dismiss: () -> Unit) {
     Dialog(dismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         CinemaFocusFrameHost {
-            val firstFocus = remember { FocusRequester() }
             val backFocus = remember { FocusRequester() }
+            var logoutRequest by remember(provider) { mutableIntStateOf(0) }
+            var logoutOwner by remember(provider) { mutableStateOf<AccountSession?>(null) }
+            var safeFocusReady by remember { mutableStateOf(false) }
             val windowFocused = LocalWindowInfo.current.isWindowFocused
             LaunchedEffect(windowFocused) {
+                safeFocusReady = false
                 if (windowFocused) {
                     withFrameNanos { }
-                    if (!firstFocus.requestFocus()) backFocus.requestFocus()
+                    safeFocusReady = backFocus.requestFocus()
                 }
             }
             BoxWithConstraints(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                 Column(Modifier.widthIn(max = 560.dp).fillMaxWidth().heightIn(max = maxHeight)
                     .cinemaSurface(false, shape = RoundedCornerShape(CinemaStyle.PanelCorner)).padding(24.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text("Аккаунт", color = CinemaStyle.Text, fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
-                    Column(Modifier.weight(1f, fill = false).fillMaxWidth().focusRequester(firstFocus).focusGroup()
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Аккаунт", Modifier.weight(1f), color = CinemaStyle.Text, fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
+                        if (accountState.profile?.authenticated == true) FieldAction(FieldGlyph.Logout, "Выйти",
+                            modifier = Modifier.focusProperties { canFocus = safeFocusReady },
+                            enabled = !accountState.accountLoading) {
+                            val owner = accountState.accountSession
+                            if (owner != null && AccountSessionGuard.shared.current(provider) == owner) {
+                                logoutOwner = owner
+                                logoutRequest++
+                            }
+                        }
+                    }
+                    Column(Modifier.weight(1f, fill = false).fillMaxWidth().focusGroup()
                         .verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        key(provider) { AuthSettings(provider, auth, changed) }
+                        key(provider) { AuthSettings(provider, auth, accountState, retryAccount, changed, logoutRequest, logoutOwner) }
                     }
                     CinematicButton("Назад", false, Modifier.focusRequester(backFocus), onClick = dismiss)
                 }
@@ -63,51 +80,60 @@ internal fun AccountDialog(provider: String, auth: AuthRepository, changed: () -
 }
 
 @Composable
-internal fun AuthSettings(provider: String, auth: AuthRepository, changed: () -> Unit) {
+internal fun AuthSettings(provider: String, auth: AuthRepository, accountState: HomeDashboardState,
+    retryAccount: () -> Unit, changed: () -> Unit, logoutRequest: Int = 0, logoutOwner: AccountSession? = null) {
     var username by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var registration by remember { mutableStateOf(false) }
     var accepted by remember { mutableStateOf(false) }
-    var profile by remember { mutableStateOf<AccountProfile?>(null) }
+    val profile = accountState.profile
     var web by remember { mutableStateOf<String?>(null) }
-    var revision by remember { mutableIntStateOf(0) }
     // Never rememberSaveable: plaintext passwords must not enter saved-instance-state.
     var password by remember { mutableStateOf("") }
-    var account by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(true) }
-    var checking by remember { mutableStateOf(true) }
+    val account = profile?.takeIf { it.authenticated == true }
+    var busy by remember { mutableStateOf(false) }
+    val checking = accountState.accountLoading
     var message by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    var pendingLogout by remember(provider) { mutableStateOf<AccountSession?>(null) }
+    LaunchedEffect(logoutRequest) {
+        if (logoutRequest > 0 && account != null && !busy && !checking) {
+            val owner = logoutOwner
+            if (owner != null && accountState.accountSession == owner && AccountSessionGuard.shared.current(provider) == owner) {
+                pendingLogout = owner
+            }
+        }
+    }
+    LaunchedEffect(accountState.accountSession, account?.authenticated) {
+        if (account == null || pendingLogout?.let { it != accountState.accountSession } == true) pendingLogout = null
+    }
+    pendingLogout?.let { expectedSession ->
+        LogoutConfirmation(dismiss = { pendingLogout = null }) {
+            pendingLogout = null
+            if (!busy && !checking && account != null && accountState.accountSession == expectedSession &&
+                AccountSessionGuard.shared.current(provider) == expectedSession) {
+                busy = true
+                scope.launch {
+                    try { auth.logout(provider, expectedSession); password = ""; message = ""; changed() }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (error: Exception) { message = networkErrorMessage(error) }
+                    finally { busy = false }
+                }
+            }
+        }
+    }
     val websiteSession = remember(web, provider) {
         if (web != null) com.bobyl.tv.data.AccountSessionGuard.shared.current(provider) else null
     }
     web?.let { AccountWebDialog(it) {
         web = null
-        revision++
         if (websiteSession != com.bobyl.tv.data.AccountSessionGuard.shared.current(provider)) changed()
     } }
-    LaunchedEffect(provider, revision) {
-        busy = true
-        checking = true
-        try {
-            account = auth.restore(provider)
-            if (account != null) {
-                profile = auth.profile(provider)
-                message = when (profile?.authenticated) {
-                    true -> ""
-                    false -> { account = null; "Войдите в аккаунт заново." }
-                    null -> "Не удалось определить состояние входа. Повторите проверку."
-                }
-            }
-        }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { message = "Не удалось восстановить сессию. Войдите заново." }
-        finally { busy = false; checking = false }
-    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(CatalogUrls.provider(provider), color = CinemaStyle.Muted, fontSize = 13.sp)
         if (checking && profile == null) SkeletonLoading(SkeletonLayout.Profile)
-        else if (account == null) {
+        // A network/challenge failure is not evidence that the saved account is signed out.
+        else if (account == null && accountState.accountError.isBlank()) {
             CinematicButton(if (registration) "Уже есть аккаунт — войти" else "Регистрация", false) { if (!busy) registration = !registration }
             if (registration) {
                 Input(email, "Email", { if (!busy) email = it })
@@ -126,49 +152,63 @@ internal fun AuthSettings(provider: String, auth: AuthRepository, changed: () ->
                     val submittedPassword = password
                     scope.launch {
                         try {
-                            account = if (registration) auth.register(provider, email, submittedName, submittedPassword) else auth.login(provider, submittedName, submittedPassword)
+                            if (registration) auth.register(provider, email, submittedName, submittedPassword)
+                            else auth.login(provider, submittedName, submittedPassword)
                             password = ""
                             message = ""
                             changed()
-                            revision++
                         } catch (cancelled: CancellationException) { throw cancelled }
                         catch (error: Exception) { message = networkErrorMessage(error) }
                         finally { busy = false }
                     }
                 }
             }
-        } else {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        } else if (account != null) {
+            AccountPremiumSummary(profile, checking, accountState.premiumFraction, Modifier.fillMaxWidth()) {
                 profile?.avatar?.takeIf { it.isNotBlank() }?.let { avatar ->
                     AsyncImage(avatar, "Аватар", Modifier.size(64.dp).clip(CircleShape), contentScale = ContentScale.Crop)
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(accountDisplayNickname(profile).ifBlank { "Аккаунт" }, color = CinemaStyle.Text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    profile?.let { data ->
-                        Text(if (data.premium) "Premium • ${homePremiumLabel(data.premiumInfo)}" else "Premium не активен", color = CinemaStyle.Muted, fontSize = 14.sp)
-                    }
                 }
-            }
-            CinemaButtonFocusGroup {
-            LazyRow(Modifier.cinemaFilmViewport(), horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(4.dp)) {
-            item { FieldAction(FieldGlyph.Refresh, "Обновить", enabled = !busy) { revision++ } }
-            item { CinematicButton("Premium / продление", false) { web = CatalogUrls.provider(provider) + "payments" } }
-            item { CinematicButton("Выйти", false) {
-                if (!busy) {
-                    busy = true
-                    scope.launch {
-                        try { auth.logout(provider); account = null; password = ""; message = ""; changed() }
-                        catch (cancelled: CancellationException) { throw cancelled }
-                        catch (error: Exception) { message = networkErrorMessage(error) }
-                        finally { busy = false }
-                    }
-                }
-            } }
-            }
             }
         }
+        if (accountState.accountError.isNotBlank()) {
+            Text(accountState.accountError, color = CinemaStyle.Error, fontSize = 14.sp)
+            FieldAction(FieldGlyph.Refresh, "Повторить", enabled = !busy && !checking, onClick = retryAccount)
+        }
+        if (profile?.authenticated == false) Text("Войдите в аккаунт заново.", color = CinemaStyle.Muted, fontSize = 14.sp)
         if (busy && !checking) LoadingIndicator("Сохраняем…")
         if (message.isNotBlank()) Text(message, color = CinemaStyle.Text, fontSize = 14.sp)
+    }
+}
+
+@Composable
+private fun LogoutConfirmation(dismiss: () -> Unit, confirm: () -> Unit) {
+    Dialog(dismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        CinemaFocusFrameHost {
+            val cancelFocus = remember { FocusRequester() }
+            val windowFocused = LocalWindowInfo.current.isWindowFocused
+            LaunchedEffect(windowFocused) {
+                if (windowFocused) {
+                    withFrameNanos { }
+                    cancelFocus.requestFocus()
+                }
+            }
+            Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                Column(Modifier.widthIn(max = 360.dp).fillMaxWidth()
+                    .cinemaSurface(false, shape = RoundedCornerShape(CinemaStyle.PanelCorner)).padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text("Выйти из аккаунта?", color = CinemaStyle.Text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                    CinemaButtonFocusGroup {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)) {
+                            CinematicButton("Отмена", false, Modifier.focusRequester(cancelFocus), onClick = dismiss)
+                            CinematicButton("Выйти", true, onClick = confirm)
+                        }
+                    }
+                }
+            }
+        }
     }
 }

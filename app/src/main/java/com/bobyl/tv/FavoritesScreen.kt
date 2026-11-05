@@ -1,7 +1,6 @@
 package com.bobyl.tv
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
@@ -70,21 +69,20 @@ internal fun FavoritesScreen(provider: String, columns: Int, revision: Int, onRe
     }
     val header: @Composable () -> Unit = {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            if (categories.isNotEmpty()) CatalogTabs(categories.map { it.id to "${it.name} (${it.count})" }, selectedId,
-                separateAll = categories.firstOrNull()?.let(::isAllBookmarkCategory) == true) { selectedId = it }
+            CatalogTabs(categories.map { it.id to "${it.name} (${it.count})" }, selectedId,
+                separateAll = categories.firstOrNull()?.let(::isAllBookmarkCategory) == true,
+                trailingAction = { FieldAction(FieldGlyph.Add, "Создать список", primary = true) { if (!busy) creating = true } }) { selectedId = it }
             CatalogTabs(contentTypes, kind, separateAll = true) { kind = it }
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) {
                     SettingsChoice("Сортировка", listOf("added" to "По добавлению", "year" to "По году", "popular" to "По популярности"), sort, compactPopup = true) { sort = it }
                 }
-                Spacer(Modifier.width(1.dp).height(32.dp).background(CinemaStyle.Outline))
-                CinemaButtonFocusGroup {
-                    CinematicButton("Создать список", true) { if (!busy) creating = true }
-                    CinematicButton("Обновить", false) { if (!busy) { createError = ""; model.retry(provider) } }
-                }
             }
             if (busy && categories.isEmpty()) SkeletonLoading(SkeletonLayout.Tabs)
             if (error.isNotBlank()) Text(error, color = CinemaStyle.Error)
+            if (state.error.isNotBlank()) CinemaButtonFocusGroup {
+                CinematicButton("Повторить", false) { if (!busy) { createError = ""; model.retry(provider) } }
+            }
         }
     }
     val category = categories.firstOrNull { it.id == selectedId }

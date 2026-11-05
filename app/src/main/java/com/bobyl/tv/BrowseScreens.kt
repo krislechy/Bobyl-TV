@@ -18,6 +18,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,18 +51,24 @@ internal fun ChoiceRow(options: List<Pair<String, String>>, selected: String, ch
 }
 
 @Composable
-internal fun CatalogTabs(options: List<Pair<String, String>>, selected: String, modifier: Modifier = Modifier, separateAll: Boolean = false, choose: (String) -> Unit) {
+internal fun CatalogTabs(options: List<Pair<String, String>>, selected: String, modifier: Modifier = Modifier, separateAll: Boolean = false,
+    trailingAction: (@Composable () -> Unit)? = null, choose: (String) -> Unit) {
     val shape = RoundedCornerShape(CinemaStyle.Corner)
-    CinemaButtonFocusGroup {
-    Box(modifier.fillMaxWidth().clip(shape).background(CinemaStyle.Rail)) {
-        if (!separateAll) ChoiceRow(options, selected, choose)
-        else LazyRow(Modifier.cinemaFilmViewport(), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+    val tabs: @Composable () -> Unit = {
+        LazyRow(Modifier.cinemaFilmViewport().then(if (trailingAction != null) Modifier.focusGroup() else Modifier),
+            contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             options.forEachIndexed { index, (id, title) ->
                 item(key = id) { CinematicButton(title, id == selected) { choose(id) } }
-                if (index == 0) item(key = "all-divider") { Spacer(Modifier.width(1.dp).height(28.dp).background(CinemaStyle.Outline)) }
+                if (separateAll && index == 0) item(key = "all-divider") { Spacer(Modifier.width(1.dp).height(28.dp).background(CinemaStyle.Outline)) }
             }
         }
     }
+    CinemaButtonFocusGroup {
+        if (trailingAction == null) Box(modifier.fillMaxWidth().clip(shape).background(CinemaStyle.Rail)) { tabs() }
+        else Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f).clip(shape).background(CinemaStyle.Rail)) { tabs() }
+            trailingAction()
+        }
     }
 }
 

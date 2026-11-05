@@ -21,13 +21,17 @@ internal fun AppUpdateSettings(first: Boolean = false) {
     val state by model.state.collectAsState()
     var installError by remember { mutableStateOf("") }
     SettingsSection("Обновление приложения", first = first) {
+        val busy = state.checking || state.downloading
+        // Keep the same focus targets alive while work runs; disabling/removing them sends TV focus to the rail.
+        CinematicButton("Проверить обновления", false) {
+            if (!busy) { installError = ""; model.check() }
+        }
         if (state.checking) LoadingIndicator("Проверяем обновления…")
-        else if (state.downloading) LoadingIndicator("Загрузка: ${state.progress}%")
-        else {
-            CinematicButton("Проверить обновления", false) { installError = ""; model.check() }
-            if (state.update != null && state.apk == null) CinematicButton("Скачать ${state.update?.versionName}", true) { model.download() }
-            state.apk?.let { apk ->
-                CinematicButton("Установить", true) {
+        if (state.update != null) {
+            val apk = state.apk
+            CinematicButton(if (apk == null) "Скачать ${state.update?.versionName}" else "Установить", true) {
+                if (!busy && apk == null) model.download()
+                else if (!busy && apk != null) {
                     installError = ""
                     try {
                         if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
@@ -42,6 +46,7 @@ internal fun AppUpdateSettings(first: Boolean = false) {
                 }
             }
         }
+        if (state.downloading) LoadingIndicator("Загрузка: ${state.progress}%")
         if (state.message.isNotBlank()) Text(state.message, color = CinemaStyle.Muted, fontSize = 14.sp)
         if (state.error.isNotBlank() || installError.isNotBlank()) Text(listOf(state.error, installError).filter { it.isNotBlank() }.joinToString("\n"),
             color = CinemaStyle.Error, fontSize = 14.sp)

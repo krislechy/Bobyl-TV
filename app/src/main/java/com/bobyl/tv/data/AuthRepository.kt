@@ -167,7 +167,9 @@ class AuthRepository(context: Context, private val transport: HtmlTransport = Ht
         }
     }
 
-    suspend fun logout(provider: String) = AccountSessionGuard.shared.change(provider) {
+    suspend fun logout(provider: String) = logout(provider, null)
+
+    internal suspend fun logout(provider: String, expectedSession: AccountSession?) = AccountSessionGuard.shared.change(provider, expectedSession) {
         PageCache.clear()
         val origin = CatalogUrls.provider(provider)
         val manager = CookieManager.getInstance()

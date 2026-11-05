@@ -26,6 +26,8 @@ import kotlinx.coroutines.withTimeout
 import java.net.URI
 
 internal data class HomeDashboardState(
+    val accountSession: AccountSession? = null,
+    val accountError: String = "",
     val nickname: String = "",
     val profile: AccountProfile? = null,
     val accountLoading: Boolean = true,
@@ -82,14 +84,20 @@ internal class HomeDashboardViewModel @JvmOverloads constructor(
         accountKey = key
         accountSession = session
         accountJob?.cancel()
-        mutableState.update { if (sameAccount) it else it.copy(nickname = "", profile = null,
-            premiumFraction = null, accountLoading = true) }
+        mutableState.update { if (sameAccount) it.copy(accountError = "", accountLoading =
+            it.accountLoading || (it.profile == null && it.accountError.isNotBlank())) else it.copy(accountSession = session,
+            accountError = "", nickname = "", profile = null, premiumFraction = null, accountLoading = true) }
         fun current() = accountKey == key && AccountSessionGuard.shared.current(provider) == session
         accountJob = viewModelScope.launch {
             try {
                 val previous = mutableState.value.profile
                 val profile = readAccountProfile(provider)
                 if (!current()) return@launch
+                if (profile != null && profile.authenticated == null) {
+                    mutableState.update { it.copy(accountLoading = false,
+                        accountError = "Не удалось определить состояние входа.") }
+                    return@launch
+                }
                 val increased = (premiumRemainingDays(profile?.premiumInfo.orEmpty()) ?: 0) >
                     (premiumRemainingDays(previous?.premiumInfo.orEmpty()) ?: Int.MAX_VALUE)
                 mutableState.update { it.copy(profile = profile, accountLoading = false,
@@ -105,10 +113,20 @@ internal class HomeDashboardViewModel @JvmOverloads constructor(
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
-                // The account dialog offers validation/retry; public Home remains usable offline.
-                if (current()) mutableState.update { it.copy(accountLoading = false) }
+                if (current()) mutableState.update { it.copy(accountLoading = false,
+                    accountError = "Не удалось загрузить аккаунт.") }
             }
         }
+    }
+
+    /** Error recovery only; opening the dialog never bypasses the shared account request key. */
+    fun retryAccount(provider: String, revision: Int, refreshRevision: Int, expectedSession: AccountSession) {
+        if (AccountSessionGuard.shared.current(provider) != expectedSession || accountSession != expectedSession ||
+            accountKey != "$provider|$revision|${expectedSession.token}|$refreshRevision" ||
+            mutableState.value.accountError.isBlank() || accountJob?.isActive == true) return
+        mutableState.update { it.copy(accountLoading = true) }
+        accountKey = ""
+        loadAccount(provider, revision, refreshRevision)
     }
 
     fun loadContent(provider: String, sessionRevision: Int, refreshRevision: Int, force: Boolean = false) {

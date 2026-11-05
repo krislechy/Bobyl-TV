@@ -2,6 +2,9 @@ package com.bobyl.tv
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,14 +24,19 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,6 +47,7 @@ import com.bobyl.tv.SkeletonAsyncImage as AsyncImage
 import com.bobyl.tv.data.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @Composable
 internal fun CinemaModal(title: String, dismiss: () -> Unit, backOnRight: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
@@ -144,6 +153,7 @@ internal fun HistoryScreen(provider: String, resume: (WatchRecord) -> Unit, onRe
             }
         }
         items(entries, key = { "${prefix}film:${it.key}" }) { entry ->
+            val continueRow = if (!showWatched && !showDeleted) remember(entry) { continueHistoryPresentation(entry) } else null
             HistoryCard(entry.film, entry.info, if (showDeleted) "Восстановить запись" else "Удалить из аккаунта и с устройства",
                 focus, "${prefix}film:${entry.key}", canRemove = !busy, watched = entry.watched,
                 watchBusy = entry.key in state.changing, deleteBusy = entry.key in state.removing, restore = showDeleted,
@@ -153,6 +163,7 @@ internal fun HistoryScreen(provider: String, resume: (WatchRecord) -> Unit, onRe
                 }),
                 sourceLabel = listOfNotNull(if (entry.server.isNotEmpty()) "Аккаунт" else null,
                     if (entry.records.isNotEmpty()) "Устройство" else null).joinToString(" · "),
+                continueRow = continueRow,
                 open = {
                     val position = entry.position
                     if (!showDeleted && !entry.watched && position != null) pendingResume = entry else open(entry.film)
@@ -192,41 +203,79 @@ private fun ResumeHistoryPrompt(record: WatchRecord, dismiss: () -> Unit, openCa
 @Composable
 private fun HistoryCard(film: CatalogFilm, info: String, removeLabel: String, focus: ActionListFocus, rowKey: String, canRemove: Boolean = true,
     watched: Boolean = false, watchBusy: Boolean = false, deleteBusy: Boolean = false, restore: Boolean = false, sourceLabel: String = "",
+    continueRow: ContinueHistoryPresentation? = null,
     toggleWatched: (() -> Unit)? = null, open: () -> Unit, remove: (() -> Unit)?) {
     var focused by remember { mutableStateOf(false) }
+    var rowFocused by remember { mutableStateOf(false) }
+    val actionsReveal = animateFloatAsState(if (rowFocused) 1f else 0f,
+        tween(if (cinemaMotionEnabled()) CinemaStyle.FocusDuration else 0,
+            easing = CubicBezierEasing(.23f, 1f, .32f, 1f)), label = "history-actions-reveal")
     val frameTarget = rememberCinemaFilmFocusTarget(focused)
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val shape = RoundedCornerShape(CinemaStyle.Corner)
     val grayscale = remember { ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) }) }
-    Row(Modifier.fillMaxWidth().background(if (watched) CinemaStyle.Rail else CinemaStyle.Surface, shape).padding(2.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.actionListTarget(focus, "$rowKey:open").weight(1f)
+    Layout(modifier = Modifier.fillMaxWidth()
+        .onFocusChanged { rowFocused = it.hasFocus }.focusGroup()
+        .background(if (watched) CinemaStyle.Rail else CinemaStyle.Surface, shape).padding(2.dp), content = {
+        Layout(modifier = Modifier.actionListTarget(focus, "$rowKey:open")
             .cinemaSurface(focused, pressed = pressed, shape = shape, focusFrameTarget = frameTarget)
             .onFocusChanged { focused = it.isFocused }
             .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClickLabel = "Открыть ${film.title}", onClick = open).padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Box(Modifier.size(58.dp, 86.dp).clip(RoundedCornerShape(8.dp)).background(CinemaStyle.Raised), contentAlignment = Alignment.Center) {
-                if (film.poster.isNotBlank()) AsyncImage(film.poster, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
-                    colorFilter = if (watched) grayscale else null)
-                else Text("▶", color = CinemaStyle.Muted, fontSize = 22.sp)
+            content = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Box(Modifier.size(58.dp, 86.dp).clip(RoundedCornerShape(8.dp)).background(CinemaStyle.Raised), contentAlignment = Alignment.Center) {
+                        if (film.poster.isNotBlank()) AsyncImage(film.poster, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
+                            colorFilter = if (watched) grayscale else null)
+                        else Text("▶", color = CinemaStyle.Muted, fontSize = 22.sp)
+                    }
+                    if (continueRow != null) ContinueHistoryContent(film.title, continueRow, sourceLabel, Modifier.weight(1f))
+                    else Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(film.title, color = if (watched) CinemaStyle.Muted else CinemaStyle.Text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (info.isNotBlank()) Text(info, color = CinemaStyle.Muted, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (sourceLabel.isNotBlank()) Text(sourceLabel, color = CinemaStyle.Muted, fontSize = 12.sp)
+                    }
+                }
+                Text("›", color = if (focused) CinemaStyle.Text else CinemaStyle.Muted, fontSize = 28.sp)
+            }) { measurables, constraints ->
+            val chevron = measurables[1].measure(constraints.copy(minWidth = 0, minHeight = 0))
+            // Keep text at the former compact width while only the surface edge and chevron move.
+            // The resulting line breaks and row height remain unchanged throughout the transition.
+            val bodyWidth = (constraints.minWidth - chevron.width - 14.dp.roundToPx()).coerceAtLeast(0)
+            val body = measurables[0].measure(constraints.copy(minWidth = bodyWidth, maxWidth = bodyWidth, minHeight = 0))
+            val height = maxOf(body.height, chevron.height)
+            layout(constraints.maxWidth, height) {
+                body.placeRelative(0, (height - body.height) / 2)
+                chevron.placeRelative(constraints.maxWidth - chevron.width, (height - chevron.height) / 2)
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(film.title, color = if (watched) CinemaStyle.Muted else CinemaStyle.Text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (info.isNotBlank()) Text(info, color = if (watched) CinemaStyle.Muted else CinemaStyle.Muted, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (sourceLabel.isNotBlank()) Text(sourceLabel, color = CinemaStyle.Muted, fontSize = 12.sp)
-            }
-            Text("›", color = if (focused) CinemaStyle.Text else CinemaStyle.Muted, fontSize = 28.sp)
         }
         CinemaButtonFocusGroup {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        toggleWatched?.let { toggle ->
-            FieldAction(FieldGlyph.Eye, if (watched) "Снять отметку просмотра" else "Отметить как просмотренное",
-                enabled = canRemove && !deleteBusy, checked = watched, loading = watchBusy, modifier = Modifier.actionListTarget(focus, "$rowKey:watch"), onClick = toggle)
+            Column(Modifier.graphicsLayer { alpha = actionsReveal.value }.drawWithContent {
+                val revealed = ((size.width + 8.dp.toPx()) * actionsReveal.value - 8.dp.toPx()).coerceIn(0f, size.width)
+                clipRect(left = size.width - revealed) { this@drawWithContent.drawContent() }
+            }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                toggleWatched?.let { toggle ->
+                    FieldAction(FieldGlyph.Eye, if (watched) "Снять отметку просмотра" else "Отметить как просмотренное",
+                        enabled = rowFocused && canRemove && !deleteBusy, checked = watched, loading = watchBusy,
+                        modifier = Modifier.actionListTarget(focus, "$rowKey:watch").focusProperties { canFocus = rowFocused }, onClick = toggle)
+                }
+                remove?.let { FieldAction(if (restore) FieldGlyph.Restore else FieldGlyph.Delete, removeLabel, enabled = rowFocused && canRemove && !watchBusy,
+                    loading = deleteBusy, modifier = Modifier.actionListTarget(focus, "$rowKey:delete").focusProperties { canFocus = rowFocused }, onClick = it) }
+            }
         }
-        remove?.let { FieldAction(if (restore) FieldGlyph.Restore else FieldGlyph.Delete, removeLabel, enabled = canRemove && !watchBusy,
-            loading = deleteBusy, modifier = Modifier.actionListTarget(focus, "$rowKey:delete"), onClick = it) }
-        }
+    }) { measurables, constraints ->
+        // Read motion during measurement: only the two changing rows relayout, not the history list.
+        val actions = measurables[1].measure(constraints.copy(minWidth = 0, minHeight = 0))
+        val actionSpace = if (actions.width > 0) actions.width + 8.dp.roundToPx() else 0
+        val revealedWidth = (actionSpace * actionsReveal.value).roundToInt()
+        val contentWidth = (constraints.maxWidth - revealedWidth).coerceAtLeast(0)
+        val compactWidth = (constraints.maxWidth - actionSpace).coerceAtLeast(0)
+        val card = measurables[0].measure(constraints.copy(minWidth = compactWidth, maxWidth = contentWidth, minHeight = 0))
+        val height = maxOf(card.height, actions.height)
+        layout(constraints.maxWidth, height) {
+            // Hidden action nodes must not intercept the full-width card's right edge.
+            card.placeRelative(0, (height - card.height) / 2, zIndex = if (rowFocused) 0f else 1f)
+            actions.placeRelative(constraints.maxWidth - actions.width, (height - actions.height) / 2)
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.bobyl.tv.data
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.currentCoroutineContext
@@ -128,9 +129,12 @@ internal class AccountSessionGuard(private val io: CoroutineDispatcher = Dispatc
     }
     private fun endChange(entry: Entry) = synchronized(entry.metadata) { entry.changing = false }
 
-    suspend fun <T> change(provider: String, commit: () -> T): T = withContext(io) {
+    suspend fun <T> change(provider: String, expectedSession: AccountSession? = null, commit: () -> T): T = withContext(io) {
         val entry = entry(provider)
         entry.transition.withLock {
+            if (expectedSession != null && expectedSession != current(provider)) {
+                throw CancellationException("Учётная запись изменилась. Выход отменён.")
+            }
             val prefix = beginChange(entry)
             try {
                 prefix.forEach { it.done.await() }

@@ -47,7 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.painterResource
 import androidx.tv.material3.Text
 
-internal enum class FieldGlyph { Search, Clear, Microphone, Reply, Like, Delete, Send, More, MoreVertical, Refresh, Restore, Eye, Star, Play, Comments, Bookmark, Back, Download, Trailer, Share, Notifications, Save }
+internal enum class FieldGlyph { Search, Clear, Microphone, Reply, Like, Delete, Send, More, MoreVertical, Refresh, Restore, Eye, Star, Play, Comments, Bookmark, Back, Download, Trailer, Share, Notifications, Save, Add, Logout }
 internal val LocalCompactFilmActions = staticCompositionLocalOf { false }
 
 /** Shared field surface; action buttons remain separate D-pad and accessibility targets. */
@@ -164,6 +164,12 @@ internal fun FieldIcon(glyph: FieldGlyph, color: Color, modifier: Modifier, fill
         fun line(x: Float, y: Float, x2: Float, y2: Float) =
             drawLine(color, point(x, y), point(x2, y2), stroke, StrokeCap.Round)
         when (glyph) {
+            FieldGlyph.Add -> { line(5f, 12f, 19f, 12f); line(12f, 5f, 12f, 19f) }
+            FieldGlyph.Logout -> {
+                line(4f, 3f, 14f, 3f); line(4f, 3f, 4f, 21f); line(4f, 21f, 14f, 21f)
+                line(14f, 3f, 14f, 8f); line(14f, 16f, 14f, 21f)
+                line(10f, 12f, 22f, 12f); line(18f, 8f, 22f, 12f); line(22f, 12f, 18f, 16f)
+            }
             FieldGlyph.Download -> {
                 line(12f, 3f, 12f, 15f); line(7f, 10f, 12f, 15f); line(12f, 15f, 17f, 10f)
                 line(4f, 17f, 4f, 21f); line(4f, 21f, 20f, 21f); line(20f, 21f, 20f, 17f)
